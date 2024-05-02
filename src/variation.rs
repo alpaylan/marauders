@@ -18,24 +18,35 @@ pub struct Variant {
 
 #[derive(Debug, Clone)]
 pub struct Variation {
+    pub name: Option<String>,   // name of the variation
     pub base: String,           // base code
     pub variants: Vec<Variant>, // list of variants
     pub active: usize,          // index of the active variant
 }
 
-impl Variation {
-    pub fn get_active(&self) -> Variant {
-        if self.active == 0 {
-            return Variant {
-                name: "base".to_string(),
-                code: self.base.clone(),
-            };
+impl Display for Variation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+        let name = if self.name.is_some() {
+            self.name.as_ref().unwrap()
         } else {
-            return self.variants[self.active - 1].clone();
-        }
+            "Unnamed"
+        };
+        
+        let active = if self.active == 0 {
+            "Base"
+        } else {
+            &self.variants[self.active - 1].name
+        };
+
+        let content = format!(
+            "(name: {}, active: {}, variants: {:?})",
+            name, active, self.variants.iter().map(|v| v.name.to_string()).collect::<Vec<String>>()
+        );
+
+        write!(f, "{}", content)
     }
 }
-
 type Constant = String;
 
 #[derive(Debug, Clone)]
@@ -213,6 +224,7 @@ impl Code {
 
         if let Some(active) = active {
             Variation {
+                name: None,
                 base,
                 variants,
                 active,
@@ -270,21 +282,13 @@ impl Code {
         strs[0].to_string()
     }
 
-    pub fn get_variations(&self) -> Vec<(String, Vec<String>, usize)> {
-        let mut variations = Vec::new();
-        for part in &self.parts {
-            match part {
-                CodePart::Variation(v) => {
-                    let mut variant_names = Vec::new();
-                    for variant in &v.variants {
-                        variant_names.push(variant.name.clone());
-                    }
-                    let prefix = Code::longest_common_prefix(variant_names.as_slice());
-                    variations.push((prefix, variant_names, v.active));
-                }
-                _ => {}
-            }
-        }
-        variations
+    pub fn get_variations(&self) -> Vec<Variation> {
+        self.parts
+            .iter()
+            .filter_map(|part| match part {
+                CodePart::Variation(v) => Some(v.clone()),
+                _ => None,
+            })
+            .collect()
     }
 }

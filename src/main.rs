@@ -24,9 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let variations = code.get_variations();
 
     for v in variations {
-        println!("{:?}", v);
+        println!("{}", v);
     }
-
-    print!("{}", code);
     Ok(())
 }

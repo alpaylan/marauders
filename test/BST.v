@@ -19,7 +19,7 @@ Fixpoint insert (k : nat) (v: nat) (t : Tree) :=
   match t with
   | E => T E k v E
   | T l k' v' r => 
-  (*! *)                 
+  (*!+ Insert [tags: mutant] [] *)                 
     if k <? k' then T (insert k v l) k' v' r 
     else if k' <? k then T l k' v' (insert k v r) 
     else T l k' v r
