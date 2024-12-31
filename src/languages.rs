@@ -3,7 +3,8 @@
 pub enum Language {
     Coq,
     Haskell,
-    Racket
+    Racket,
+    Rust
 }
 
 impl Language {
@@ -11,7 +12,8 @@ impl Language {
         match self {
             Language::Coq => "v",
             Language::Haskell => "hs",
-            Language::Racket => "rkt"
+            Language::Racket => "rkt",
+            Language::Rust => "rs"
         }
     }
 
@@ -20,6 +22,7 @@ impl Language {
             "v" => Some(Language::Coq),
             "hs" => Some(Language::Haskell),
             "rkt" => Some(Language::Racket),
+            "rs" => Some(Language::Rust),
             _ => None
         }
     }
@@ -28,7 +31,8 @@ impl Language {
         match self {
             Language::Coq => "(*".to_string(),
             Language::Haskell => "-{".to_string(),
-            Language::Racket => "|#".to_string()
+            Language::Racket => "|#".to_string(),
+            Language::Rust => "/*".to_string()
         }
     }
 
@@ -36,7 +40,8 @@ impl Language {
         match self {
             Language::Coq => "*)".to_string(),
             Language::Haskell => "}-".to_string(),
-            Language::Racket => "#|".to_string()
+            Language::Racket => "#|".to_string(),
+            Language::Rust => "*/".to_string()
         }
     }
 

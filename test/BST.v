@@ -1,4 +1,3 @@
-
 Require Import List ZArith. Import ListNotations.
 Require Extraction.
 From QuickChick Require Import QuickChick.
@@ -150,9 +149,3 @@ Fixpoint size (t: Tree) :=
   | T l k v r => 1 + size l + size r
   end
 .
-
-
-
-
-
-
