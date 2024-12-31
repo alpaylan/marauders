@@ -1,7 +1,9 @@
-# Code Mutation Tool
+# Marauder
 
-This is a command line tool for analyzing existing inline mutants in code, reporting the mutations, and applying several mutations.
+Marauder is a command line tool built for inline mutation testing. It is designed to be used in conjunction with a test suite to identify and apply mutations to code.
 
-Capabilities:
+Current Capabilities:
+
 - [ ] Report the set of variants in a file.
-- [ ] 
+- [ ] Activate a variant in a file.
+- [ ] Deactivate a variant in a file.

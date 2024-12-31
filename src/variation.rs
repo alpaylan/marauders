@@ -1,15 +1,14 @@
-use std::fmt::Display;
-
-use crate::languages::Language;
-
 /// A code is divided into variations and constants.
 /// A variation is a part of a code that can be changed with several variants.
 /// For each variation, some variant is currently active.
 
+use std::fmt::Display;
+
+use crate::languages::Language;
+
 /// A variant is a part of a variation that can be used to replace the base code.
 /// A variant has a name and a code.
 /// The name is used to identify the variant.
-
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub name: String, // name of the variant
@@ -68,38 +67,38 @@ impl Display for Code {
             match part {
                 CodePart::Constant(c) => content.push_str(c),
                 CodePart::Variation(v) => {
-                    content.push_str("\n");
+                    content.push('\n');
                     content.push_str(&self.language.variation_begin());
-                    content.push_str("\n");
+                    content.push('\n');
                     if v.active == 0 {
                         content.push_str(&v.base);
                     } else {
                         content.push_str(&self.language.variant_body_begin());
-                        content.push_str("\n");
+                        content.push('\n');
                         content.push_str(&v.base);
-                        content.push_str("\n");
+                        content.push('\n');
                         content.push_str(&self.language.variant_body_end());
                     }
-                    content.push_str("\n");
+                    content.push('\n');
 
                     for (i, variant) in v.variants.iter().enumerate() {
                         content.push_str(&self.language.variant_header_begin());
                         content.push_str(&variant.name);
                         content.push_str(&self.language.variant_header_end());
-                        content.push_str("\n");
+                        content.push('\n');
                         if i + 1 != v.active {
                             content.push_str(&self.language.variant_body_begin());
-                            content.push_str("\n");
+                            content.push('\n');
                         }
                         content.push_str(&variant.code);
-                        content.push_str("\n");
+                        content.push('\n');
                         if i + 1 != v.active {
                             content.push_str(&self.language.variant_body_end());
-                            content.push_str("\n");
+                            content.push('\n');
                         }
                     }
                     content.push_str(&self.language.variation_end());
-                    content.push_str("\n");
+                    content.push('\n');
                 }
             }
         }
@@ -128,7 +127,7 @@ impl Code {
         let mut headers = Vec::new();
         let mut start = 0;
         // get variant name
-        let _ = loop {
+        loop {
             let header_begin = variation_content[start..].find(&language.variant_header_begin());
 
             if header_begin.is_none() {
@@ -145,8 +144,8 @@ impl Code {
             let header_end = header_end.unwrap() + header_begin;
 
             let variant_name = variation_content[(header_begin
-                + &language.variant_header_begin().len())
-                ..(header_end - &language.variant_header_end().len() + 1)]
+                + language.variant_header_begin().len())
+                ..(header_end - language.variant_header_end().len() + 1)]
                 .split_whitespace()
                 .next();
 
@@ -275,7 +274,7 @@ impl Code {
         for (idx,c) in strs[0].char_indices() {
             // Because `s[..idx]` represents a common prefix,
             // `idx` must be a valid character boundary in all the strings
-            if !strs[1..].iter().all(|s| s[idx..].chars().next() == Some(c)) {
+            if !strs[1..].iter().all(|s| s[idx..].starts_with(c)) {
                 return strs[0][..idx].to_string();
             }
         }
