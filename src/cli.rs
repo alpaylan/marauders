@@ -1,7 +1,7 @@
 
 use clap::Parser;
 
-use crate::code::{Code, CodePart};
+use crate::code::{Code, SpanContent};
 
 #[derive(Parser)]
 pub(crate) struct Opts {
@@ -55,13 +55,14 @@ fn run_list_command(path: &str) -> anyhow::Result<()> {
     // todo: handle directories and recursive listing
     let code = &mut Code::from_file(path)?;
 
-    let variations = code.get_variations();
-
-    // todo: this needs code path and spans
-    for v in variations {
-        println!("{}", v);
+    for span in code.parts.iter() {
+        match &span.content {
+            SpanContent::Variation(v) => {
+                println!("{}:{} {}", path, span.line, v);
+            }
+            _ => {}
+        }
     }
-
     Ok(())
 }
 
@@ -74,14 +75,14 @@ fn run_set_command(path: &str, variant: &str) -> anyhow::Result<()> {
         .parts
         .iter()
         .enumerate()
-        .find(|(_, v)| match v {
-            CodePart::Variation(v) => v.variants.iter().any(|v| v.name == variant),
+        .find(|(_, v)| match &v.content {
+            SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
             _ => false,
         })
         .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
     
-    let variation = match variation {
-        CodePart::Variation(v) => v,
+    let variation = match &variation.content {
+        SpanContent::Variation(v) => v,
         _ => unreachable!(),
     };
 
@@ -115,14 +116,14 @@ fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
         .parts
         .iter()
         .enumerate()
-        .find(|(_, v)| match v {
-            CodePart::Variation(v) => v.variants.iter().any(|v| v.name == variant),
+        .find(|(_, v)| match &v.content {
+            SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
             _ => false,
         })
         .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
     
-    let variation = match variation {
-        CodePart::Variation(v) => v,
+    let variation = match &variation.content {
+        SpanContent::Variation(v) => v,
         _ => unreachable!(),
     };
 

@@ -18,7 +18,7 @@ Fixpoint insert (k : nat) (v: nat) (t : Tree) :=
   match t with
   | E => T E k v E
   | T l k' v' r => 
-  (*!+ Insert [tags: mutant] [] *)                 
+  (*! insert [easy, new] *)                 
     if k <? k' then T (insert k v l) k' v' r 
     else if k' <? k then T l k' v' (insert k v r) 
     else T l k' v r
@@ -53,7 +53,7 @@ Fixpoint delete (k: nat) (t: Tree) :=
   match t with
   | E => E
   | T l k' v' r =>
-  (*! *)
+  (*! [hard] *)
   if k <? k' then T (delete k l) k' v' r
   else if k' <? k then T l k' v' (delete k r)
   else join l r
@@ -100,31 +100,31 @@ Fixpoint union_ (l: Tree) (r: Tree) (f: nat) :=
     match l, r with
     | E, _ => r
     | _, E => l
-    (*! *)
-    | (T l k v r), t =>
+(*! *)
+| (T l k v r), t =>
       T (union_ l (below k t) f') k v (union_ r (above k t) f')
-    (*!! union_6 *)
-    (*!
-    | (T l k v r), (T l' k' v' r') =>
+(*!!union_6*)
+(*!
+| (T l k v r), (T l' k' v' r') =>
       T l k v (T (union_ r l' f') k' v' r')
-    *)
-    (*!! union_7 *)
-    (*!     
-    | (T l k v r), (T l' k' v' r') =>
+*)
+(*!!union_7*)
+(*!
+| (T l k v r), (T l' k' v' r') =>
       if k =? k' then T (union_ l l' f') k v (union_ r r' f')
       else if k <? k' then T l k v (T (union_ r l' f') k' v' r')
       else union_ (T l' k' v' r') (T l k v r) f'
-    *)
-    (*!! union_8 *)
-    (*!
-    | (T l k v r), (T l' k' v' r') =>
+*)
+(*!!union_8*)
+(*!
+| (T l k v r), (T l' k' v' r') =>
     if k =? k'  then T (union_ l l' f') k v (union_ r r' f')
     else if k <? k'   then T (union_ l (below k l') f') k v
                             (union_ r (T (above k l') k' v' r') f')
-      else union_ (T l' k' v' r') (T l k v r) f' 
-    *)
-    (* !*)
-    end
+      else union_ (T l' k' v' r') (T l k v r) f'
+*)
+(* !*)
+end
   end
 .
 

@@ -1,21 +1,55 @@
 use std::fmt::Display;
 
+use clap::parser;
+use pest::Parser;
+
 use crate::{
-    languages::Language,
-    variation::{Variant, Variation},
+    languages::Language, variation::Variation
 };
 
 #[derive(Debug)]
 pub struct Code {
     pub language: Language,
-    pub parts: Vec<CodePart>,
+    pub parts: Vec<Span>,
     pub path: String,
+}
+
+impl Code {
+    pub fn new(language: Language, parts: Vec<Span>, path: String) -> Code {
+        Code {
+            language,
+            parts,
+            path,
+        }
+    }
 }
 
 type Constant = String;
 
-#[derive(Debug, Clone)]
-pub enum CodePart {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Span {
+    pub(crate) line: usize,
+    pub(crate) content: SpanContent,
+}
+
+impl Span {
+    pub(crate) fn constant(content: String, line: usize) -> Span {
+        Span {
+            line,
+            content: SpanContent::Constant(content),
+        }
+    }
+
+    pub(crate) fn variation(variation: Variation, line: usize) -> Span {
+        Span {
+            line,
+            content: SpanContent::Variation(variation),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpanContent {
     Variation(Variation),
     Constant(Constant),
 }
@@ -24,11 +58,16 @@ impl Display for Code {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut content = String::new();
         for part in &self.parts {
-            match part {
-                CodePart::Constant(c) => content.push_str(c),
-                CodePart::Variation(v) => {
+            match &part.content {
+                SpanContent::Constant(c) => content.push_str(c),
+                SpanContent::Variation(v) => {
                     content.push('\n');
-                    content.push_str(&self.language.variation_begin());
+                    if let Some(name) = &v.name {
+                        content
+                            .push_str(&self.language.variation_begin(format!("{name} ").as_str()));
+                    } else {
+                        content.push_str(&self.language.variation_begin(""));
+                    }
                     content.push('\n');
                     if v.active == 0 {
                         content.push_str(&v.base);
@@ -69,12 +108,12 @@ impl Display for Code {
 }
 
 impl Code {
-    pub(crate) fn from_file(filepath: &str) -> Result<Code, std::io::Error> {
+    pub(crate) fn from_file(filepath: &str) -> anyhow::Result<Code> {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
         let language = Code::detect_language(filepath);
-        let code = Code::parse_code(filepath.to_string(), &file_content, language);
-        Ok(code)
+        let spans = crate::parser::parse_code(&file_content)?;
+        Ok(Code::new(language, spans, filepath.to_string()))
     }
 
     pub(crate) fn into_file(&self, filepath: &str) -> anyhow::Result<()> {
@@ -143,105 +182,111 @@ impl Code {
         }
     }
 
-    fn parse_variation(variation_content: &str, language: &Language) -> Variation {
-        // parse the variation content and return a variation
-        let variation_content = variation_content.trim();
-        let all_variants = Code::get_all_variant_headers(variation_content, language);
+    // fn parse_variation(variation_content: &str, language: &Language) -> Variation {
+    //     // parse the variation content and return a variation
+    //     let variation_content = variation_content.trim();
+    //     let all_variants = Code::get_all_variant_headers(variation_content, language);
 
-        if all_variants.is_empty() {
-            panic!("Variation must have at least a variant");
-        }
+    //     if all_variants.is_empty() {
+    //         panic!("Variation must have at least a variant");
+    //     }
 
-        let base = variation_content[..all_variants[0].1].to_string();
-        let (base, is_base_inactive) = Code::remove_comments(&base, language);
-        let mut variants = Vec::new();
-        let mut active = if is_base_inactive { None } else { Some(0) };
+    //     let base = variation_content[..all_variants[0].1].to_string();
+    //     let (base, is_base_inactive) = Code::remove_comments(&base, language);
+    //     let mut variants = Vec::new();
+    //     let mut active = if is_base_inactive { None } else { Some(0) };
 
-        for i in 0..all_variants.len() - 1 {
-            let code = &variation_content
-                [(all_variants[i].2 + language.variant_header_end().len())..all_variants[i + 1].1];
+    //     for i in 0..all_variants.len() - 1 {
+    //         let code = &variation_content
+    //             [(all_variants[i].2 + language.variant_header_end().len())..all_variants[i + 1].1];
 
-            let (code, inactive) = Code::remove_comments(code, language);
+    //         let (code, inactive) = Code::remove_comments(code, language);
 
-            if active.is_none() && !inactive {
-                active = Some(i + 1);
-            }
+    //         if active.is_none() && !inactive {
+    //             active = Some(i + 1);
+    //         }
 
-            let variant = Variant {
-                name: all_variants[i].0.to_string(),
-                code,
-            };
+    //         let variant = Variant {
+    //             name: all_variants[i].0.to_string(),
+    //             code,
+    //         };
 
-            variants.push(variant);
-        }
+    //         variants.push(variant);
+    //     }
 
-        let code = &variation_content
-            [(all_variants[all_variants.len() - 1].2 + language.variant_header_end().len())..];
+    //     let code = &variation_content
+    //         [(all_variants[all_variants.len() - 1].2 + language.variant_header_end().len())..];
 
-        let (code, inactive) = Code::remove_comments(code, language);
+    //     let (code, inactive) = Code::remove_comments(code, language);
 
-        if active.is_none() && !inactive {
-            active = Some(all_variants.len());
-        }
+    //     if active.is_none() && !inactive {
+    //         active = Some(all_variants.len());
+    //     }
 
-        let variant = Variant {
-            name: all_variants[all_variants.len() - 1].0.to_string(),
-            code,
-        };
+    //     let variant = Variant {
+    //         name: all_variants[all_variants.len() - 1].0.to_string(),
+    //         code,
+    //     };
 
-        variants.push(variant);
+    //     variants.push(variant);
 
-        if let Some(active) = active {
-            Variation {
-                name: None,
-                base,
-                variants,
-                active,
-            }
-        } else {
-            panic!("At least one variant must be active");
-        }
-    }
+    //     if let Some(active) = active {
+    //         Variation {
+    //             name: None,
+    //             base,
+    //             variants,
+    //             active,
+    //         }
+    //     } else {
+    //         panic!("At least one variant must be active");
+    //     }
+    // }
 
-    fn get_variation<'a>(
-        content: &'a str,
-        language: &Language,
-    ) -> Option<(&'a str, Variation, &'a str)> {
-        // get the next variation if it exists
-        let begin = content.find(&language.variation_begin())? + language.variation_begin().len();
-        let end = begin + content[begin..].find(&language.variation_end())?;
+    // fn get_variation<'a>(
+    //     content: &'a str,
+    //     language: &Language,
+    // ) -> Option<(&'a str, Variation, &'a str)> {
+    //     // get the next variation if it exists
+    //     let begin = content.find(&language.variation_begin())? + language.variation_begin().len();
+    //     let end = begin + content[begin..].find(&language.variation_end())?;
 
-        let variation_content = &content[begin..end];
-        let pref = &content[..begin - language.variation_begin().len()].trim();
-        let rest = &content[end + language.variation_end().len()..].trim();
+    //     let variation_content = &content[begin..end];
+    //     let pref = &content[..begin - language.variation_begin().len()].trim();
+    //     let rest = &content[end + language.variation_end().len()..].trim();
 
-        let variation = Code::parse_variation(variation_content, language);
+    //     let variation = Code::parse_variation(variation_content, language);
 
-        Some((pref, variation, rest))
-    }
+    //     Some((pref, variation, rest))
+    // }
 
-    pub(crate) fn parse_code(path: String, content: &str, language: Language) -> Code {
-        // parse the content and return a list of variations and constants
-        let mut parts = Vec::new();
-        let mut content = content.trim();
-        
-        // todo: currently, there's a bug with the tagged variations, they don't get parsed correctly
+    // pub(crate) fn parse_code(path: String, content: &str, language: Language) -> Code {
+    //     // parse the content and return a list of variations and constants
+    //     let mut parts = Vec::new();
+    //     let mut content = content.trim();
 
-        // todo: save the whitespaces before variants, so that they can be restored
-        while let Some((pref, variation, rest)) = Code::get_variation(content, &language) {
-            parts.push(CodePart::Constant(pref.to_string()));
-            parts.push(CodePart::Variation(variation));
-            content = rest.trim();
-        }
+    //     // todo: currently, there's a bug with the tagged variations, they don't get parsed correctly
 
-        parts.push(CodePart::Constant(content.to_string()));
+    //     // todo: save the whitespaces before variants, so that they can be restored
 
-        Code {
-            language,
-            parts,
-            path,
-        }
-    }
+    //     let mut current_line = 1;
+
+    //     while let Some((pref, variation, rest)) = Code::get_variation(content, &language) {
+    //         parts.push(Span::constant(pref.to_string(), current_line));
+    //         let pref_lines = pref.lines().count();
+    //         let variation_lines = variation.lines();
+    //         parts.push(Span::variation(variation, current_line + pref_lines));
+    //         current_line += pref_lines + variation_lines + 1;
+    //         content = rest;
+    //     }
+
+    //     parts.push(Span::constant(content.to_string(), current_line));
+
+    //     Code {
+    //         language,
+    //         parts,
+    //         path,
+    //     }
+    // }
 }
 
 impl Code {
@@ -261,8 +306,8 @@ impl Code {
     pub(crate) fn get_variations(&self) -> Vec<Variation> {
         self.parts
             .iter()
-            .filter_map(|part| match part {
-                CodePart::Variation(v) => Some(v.clone()),
+            .filter_map(|part| match &part.content {
+                SpanContent::Variation(v) => Some(v.clone()),
                 _ => None,
             })
             .collect()
@@ -279,8 +324,8 @@ impl Code {
             variant_index,
             variation_index
         );
-        match self.parts[variation_index] {
-            CodePart::Variation(ref mut v) => {
+        match self.parts[variation_index].content {
+            SpanContent::Variation(ref mut v) => {
                 v.active = variant_index;
             }
             _ => anyhow::bail!("invalid variation index"),

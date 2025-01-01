@@ -6,6 +6,7 @@ mod algebra;
 mod cli;
 mod code;
 mod languages;
+mod parser;
 mod syntax;
 mod variation;
 

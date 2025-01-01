@@ -1,0 +1,59 @@
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+
+// Code ::= (Text | Mutation)+
+code = { (mutation | text)+ }
+
+// Mutation ::= Inline | Variable | Variation
+mutation = { variation | inline | variable }
+
+// Inline ::= COMMENT_BEGIN Tags? “!”  Text COMMENT_END
+inline = { comment_begin ~ "!" ~ text ~ comment_end }
+
+// Variation ::= Base Variant+ End
+variation = { variation_header ~ base ~ variant+ ~ end }
+
+// Base ::= COMMENT_BEGIN Tags? “!” Identifier? COMMENT_END Text
+// todo: add tags
+
+variation_begin_marker = @{ comment_begin ~ "!" }
+variation_header = { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
+
+base = { text }
+// End ::= COMMENT_BEGIN “?” COMMENT_END
+end = @{ comment_begin ~ WHITE_SPACE ~ "!" ~ comment_end }
+
+// Variant ::= VariantHeader VariantBody
+variant = { variant_header ~ variant_body }
+
+// VariantHeader ::= COMMENT_BEGIN Tags? “!!” Identifier COMMENT_END
+variant_begin_marker = @{ comment_begin ~ "!!" }
+variant_header = { variant_begin_marker ~ identifier ~ comment_end }
+
+// VariantBody ::= COMMENT_BEGIN “!” Text COMMENT_END
+variant_body_begin_marker = @{ comment_begin ~ "!" }
+variant_body = { variant_body_begin_marker ~ text ~ comment_end }
+
+// Tags ::= “[“ (Tag “,”)* Tag “]”
+tags = { "[" ~ tag ~ ("," ~ tag)* ~ "]" }
+
+// Tag ::= Identifier
+tag = { identifier }
+
+// Variable ::= Default Variant+ End
+variable = { default ~ variant+ ~ end }
+
+// Default ::= DefaultHeader DefaultBody
+default = { default_header ~ default_body }
+
+// DefaultHeader ::= COMMENT_BEGIN Tags? “$” Mode? Identifier? COMMENT_END
+default_header = { comment_begin ~ "$" ~ identifier ~ comment_end }
+
+// DefaultBody ::= COMMENT_BEGIN “!” Text COMMENT_END
+default_body = { comment_begin ~ "!" ~ text ~ comment_end }
+
+comment_begin =  { "(*" | "/*" | "-{" | "|#" }
+comment_end   =  { "*)" | "*/" | "}-" | "#|" }
+
+identifier    = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+text          = { (!(variant_body_begin_marker | comment_end) ~ ANY)+ }

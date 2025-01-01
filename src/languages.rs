@@ -45,8 +45,8 @@ impl Language {
         }
     }
 
-    pub fn variation_begin(&self) -> String {
-        format!(r"{}! {}", self.comment_begin(), self.comment_end())
+    pub fn variation_begin(&self, name: &str) -> String {
+        format!(r"{}! {}{}", self.comment_begin(), name, self.comment_end())
     }
 
     pub fn variation_end(&self) -> String {
