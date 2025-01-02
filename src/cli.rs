@@ -64,11 +64,8 @@ fn run_list_command(path: &str) -> anyhow::Result<()> {
     let code = &mut Code::from_file(path)?;
 
     for span in code.parts.iter() {
-        match &span.content {
-            SpanContent::Variation(v) => {
-                println!("{}:{} {}", path, span.line, v);
-            }
-            _ => {}
+        if let SpanContent::Variation(v) = &span.content {
+            println!("{}:{} {}", path, span.line, v);
         }
     }
     Ok(())
@@ -156,17 +153,14 @@ fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
 fn run_reset_command(path: &str) -> anyhow::Result<()> {
     let code = &mut Code::from_file(path)?;
 
-    code.parts
-        .iter_mut()
-        .for_each(|span| match &mut span.content {
-            SpanContent::Variation(v) => {
-                v.active = 0;
-            }
-            _ => {}
-        });
+    code.parts.iter_mut().for_each(|span| {
+        if let SpanContent::Variation(v) = &mut span.content {
+            v.active = 0;
+        }
+    });
 
-    code.into_file(&path)?;
-    
+    code.save_to_file(path)?;
+
     log::info!("all variations reset to base");
     println!("all variations reset to base");
 

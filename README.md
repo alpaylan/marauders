@@ -22,15 +22,15 @@ Current Capabilities:
 ## Installation
 
 ```bash
-cargo install marauder
+cargo install marauders
 ```
 
 ## Usage
 
 ```bash
-$ marauder --help
+$ marauders --help
 > 
-Usage: marauder <COMMAND>
+Usage: marauders <COMMAND>
     Commands:
     list   List variations in the code
     set    Set active variant
@@ -45,7 +45,7 @@ Usage: marauder <COMMAND>
 Users can list the variations in a file or directory using the `list` command:
 
 ```bash
-$ marauder list --path <path-to-file>
+$ marauders list --path <path-to-file>
 > 
     test/BST.v:21 (name: insert, active: base, variants: ["insert_1", "insert_2", "insert_3"], tags: ["new", "easy"])
     test/BST.v:57 (name: anonymous, active: base, variants: ["delete_4", "delete_5"], tags: [])
@@ -55,21 +55,21 @@ $ marauder list --path <path-to-file>
 Users can set the active variant in a file or directory using the `set` command:
 
 ```bash
-$ marauder set --path <path-to-file> --variant <variant-name>
+$ marauders set --path <path-to-file> --variant <variant-name>
 > active variant set to 'insert_1' in 'test/BST.v:21'
 ```
 
 Users can unset the active variant in a file or directory using the `unset` command:
 
 ```bash
-$ marauder unset --path <path-to-file>
+$ marauders unset --path <path-to-file>
 > active variant unset to base in 'test/BST.v:21'
 ```
 
 Users can reset all variations in a file or directory using the `reset` command:
 
 ```bash
-$ marauder reset --path <path-to-file>
+$ marauders reset --path <path-to-file>
 > all variations reset to base in 'test/BST.v'
 ```
 
@@ -85,7 +85,7 @@ expr =  expr + expr
         | expr * expr
         | +tag
         | *tag
-        | varint
+        | variant
         | variation
 ```
 
@@ -104,7 +104,7 @@ the user all the copies.
 
 ## Mutation Syntaxes
 
-marauder supports multiple mechanisms for expressing mutations within code, the default
+marauders supports multiple mechanisms for expressing mutations within code, the default
 mode is the `comment syntax`, in which users can express mutations by adding comments
 to the code. The comment syntax is as follows:
 
@@ -172,7 +172,5 @@ which is an issue with all other mutation types. Although, the downside is it is
 > [!NOTE]
 > This feature is not yet implemented.
 
-marauder, in addition to supporting multiple mutation syntaxes, also supports converting between them. The conversion is done by specifying the input and output syntaxes, and the tool will convert the mutations from the input syntax to the output syntax. The conversion is a crucial feature, as different mutation syntaxes have different trade-offs, and it is important to be able to switch between them. While git patches can allow writing mutations
+marauders, in addition to supporting multiple mutation syntaxes, also supports converting between them. The conversion is done by specifying the input and output syntaxes, and the tool will convert the mutations from the input syntax to the output syntax. The conversion is a crucial feature, as different mutation syntaxes have different trade-offs, and it is important to be able to switch between them. While git patches can allow writing mutations
 as if they were changes to the code, they do not allow a holistic view of the mutations as the comment syntax, which requires lots of machinery to work with as opposed to the preprocessor macros, all of which are slower to use than the functional mutations due to the need for multiple compilations.
-
-

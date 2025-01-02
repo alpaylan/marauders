@@ -1,7 +1,7 @@
 use pest::Parser as _;
 use pest_derive::Parser;
 
-use crate::code::{Code, Span};
+use crate::code::Span;
 use crate::variation::{Variant, Variation};
 
 #[derive(Parser)]
@@ -21,7 +21,11 @@ pub(crate) fn parse_code(input: &str) -> anyhow::Result<Vec<Span>> {
     Ok(spans)
 }
 
-fn parse_span(pair: pest::iterators::Pair<Rule>, spans: &mut Vec<crate::code::Span>, line: usize) -> usize {
+fn parse_span(
+    pair: pest::iterators::Pair<Rule>,
+    spans: &mut Vec<crate::code::Span>,
+    line: usize,
+) -> usize {
     match pair.as_rule() {
         Rule::text => {
             spans.push(Span::constant(pair.as_str().to_string(), line));
@@ -29,10 +33,7 @@ fn parse_span(pair: pest::iterators::Pair<Rule>, spans: &mut Vec<crate::code::Sp
         }
         Rule::mutation => {
             let (variation, current_lines) = parse_variation(pair.into_inner().next().unwrap());
-            spans.push(Span::variation(
-                    variation,
-                    line,
-            ));
+            spans.push(Span::variation(variation, line));
             current_lines
         }
         _ => {
