@@ -113,7 +113,7 @@ impl Code {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
         let language = Code::detect_language(filepath);
-        let spans = crate::parser::parse_code(&file_content)?;
+        let spans = crate::syntax::comment::parse_code(&file_content)?;
         Ok(Code::new(language, spans, filepath.to_string()))
     }
 

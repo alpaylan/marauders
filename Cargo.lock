@@ -269,6 +269,7 @@ dependencies = [
  "clap",
  "env_logger",
  "insta",
+ "lazy_static",
  "log",
  "pest",
  "pest_derive",
