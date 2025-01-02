@@ -1,4 +1,3 @@
-
 use clap::Parser;
 
 use crate::code::{Code, SpanContent};
@@ -79,8 +78,13 @@ fn run_set_command(path: &str, variant: &str) -> anyhow::Result<()> {
             SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
             _ => false,
         })
-        .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
-    
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "variant '{variant}' not found, possible variants are ({})",
+                code.get_all_variants().join(",")
+            )
+        })?;
+
     let variation = match &variation.content {
         SpanContent::Variation(v) => v,
         _ => unreachable!(),
@@ -103,9 +107,13 @@ fn run_set_command(path: &str, variant: &str) -> anyhow::Result<()> {
         variation_index,
     );
 
-    code.set_active_variant(variation_index, variant_index)
-}
+    code.set_active_variant(variation_index, variant_index)?;
 
+    log::info!("active variant set to '{}'", variant);
+    println!("active variant set to '{}'", variant);
+
+    Ok(())
+}
 
 fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, if it is not set, do not unset it
@@ -121,7 +129,7 @@ fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
             _ => false,
         })
         .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
-    
+
     let variation = match &variation.content {
         SpanContent::Variation(v) => v,
         _ => unreachable!(),

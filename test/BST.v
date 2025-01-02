@@ -17,27 +17,28 @@ Axiom fuel : nat. Extract Constant fuel => "100000".
 Fixpoint insert (k : nat) (v: nat) (t : Tree) :=
   match t with
   | E => T E k v E
-  | T l k' v' r => 
-  (*! insert [easy, new] *)                 
-    if k <? k' then T (insert k v l) k' v' r 
+  | T l k' v' r =>
+(*! insert [new, easy] *)
+if k <? k' then T (insert k v l) k' v' r 
     else if k' <? k then T l k' v' (insert k v r) 
     else T l k' v r
-  (*!! insert_1  *)
-  (*!
-    T E k v E
-  *)
-  (*!! insert_2 *)
+(*!! insert_1 *)
 (*!
-  if k <? k' then T (insert k v l) k' v' r
-  else T l k' v r *)
- 
-  (*!! insert_3 *)
-  
-  (*! if k <? k' then T (insert k v l) k' v' r
+T E k v E
+*)
+(*!! insert_2 *)
+(*!
+if k <? k' then T (insert k v l) k' v' r
+  else T l k' v r
+*)
+(*!! insert_3 *)
+(*!
+if k <? k' then T (insert k v l) k' v' r
   else if k' <? k then T l k' v' (insert k v r)
-  else T l k' v' r *)
-  (* !*)
-  end.
+  else T l k' v' r
+*)
+(* !*)
+end.
 
 Fixpoint join (l: Tree) (r: Tree) :=
   match l, r with
@@ -53,24 +54,24 @@ Fixpoint delete (k: nat) (t: Tree) :=
   match t with
   | E => E
   | T l k' v' r =>
-  (*! [hard] *)
-  if k <? k' then T (delete k l) k' v' r
+(*! *)
+(*!
+if k <? k' then T (delete k l) k' v' r
   else if k' <? k then T l k' v' (delete k r)
   else join l r
-  (*!! delete_4 *)
-  (*!
-  if k <? k' then delete k l
+*)
+(*!! delete_4 *)
+if k <? k' then delete k l
   else if k' <? k then delete k r
   else join l r
-  *)
-  (*!! delete_5 *)
-  (*!
-  if k' <? k then T (delete k l) k' v' r
+(*!! delete_5 *)
+(*!
+if k' <? k then T (delete k l) k' v' r
   else if k <? k' then T l k' v' (delete k r)
   else join l r
-  *)
-  (* !*)
-  end.
+*)
+(* !*)
+end.
 
 
 
@@ -103,19 +104,19 @@ Fixpoint union_ (l: Tree) (r: Tree) (f: nat) :=
 (*! *)
 | (T l k v r), t =>
       T (union_ l (below k t) f') k v (union_ r (above k t) f')
-(*!!union_6*)
+(*!! union_6 *)
 (*!
 | (T l k v r), (T l' k' v' r') =>
       T l k v (T (union_ r l' f') k' v' r')
 *)
-(*!!union_7*)
+(*!! union_7 *)
 (*!
 | (T l k v r), (T l' k' v' r') =>
       if k =? k' then T (union_ l l' f') k v (union_ r r' f')
       else if k <? k' then T l k v (T (union_ r l' f') k' v' r')
       else union_ (T l' k' v' r') (T l k v r) f'
 *)
-(*!!union_8*)
+(*!! union_8 *)
 (*!
 | (T l k v r), (T l' k' v' r') =>
     if k =? k'  then T (union_ l l' f') k v (union_ r r' f')

@@ -1,4 +1,3 @@
-
 type Tag = String;
 type Id = String;
 
@@ -9,6 +8,3 @@ pub(crate) enum Expr {
     UProduct(Tag),
     Id(Id),
 }
-
-
-

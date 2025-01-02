@@ -1,10 +1,9 @@
-
 #[derive(Debug)]
 pub enum Language {
     Coq,
     Haskell,
     Racket,
-    Rust
+    Rust,
 }
 
 impl Language {
@@ -13,7 +12,7 @@ impl Language {
             Language::Coq => "v",
             Language::Haskell => "hs",
             Language::Racket => "rkt",
-            Language::Rust => "rs"
+            Language::Rust => "rs",
         }
     }
 
@@ -23,7 +22,7 @@ impl Language {
             "hs" => Some(Language::Haskell),
             "rkt" => Some(Language::Racket),
             "rs" => Some(Language::Rust),
-            _ => None
+            _ => None,
         }
     }
 
@@ -32,7 +31,7 @@ impl Language {
             Language::Coq => "(*".to_string(),
             Language::Haskell => "-{".to_string(),
             Language::Racket => "|#".to_string(),
-            Language::Rust => "/*".to_string()
+            Language::Rust => "/*".to_string(),
         }
     }
 
@@ -41,7 +40,7 @@ impl Language {
             Language::Coq => "*)".to_string(),
             Language::Haskell => "}-".to_string(),
             Language::Racket => "#|".to_string(),
-            Language::Rust => "*/".to_string()
+            Language::Rust => "*/".to_string(),
         }
     }
 
@@ -68,6 +67,4 @@ impl Language {
     pub fn variant_body_end(&self) -> String {
         self.comment_end()
     }
-
-
 }

@@ -40,7 +40,7 @@ fn parse_span(pair: pest::iterators::Pair<Rule>, spans: &mut Vec<crate::code::Sp
 fn parse_variation(pair: pest::iterators::Pair<Rule>) -> Variation {
     let mut pairs = pair.into_inner();
     let header = pairs.next().unwrap();
-    let base = pairs.next().unwrap();
+    let base = parse_base(pairs.next().unwrap());
     let mut variants = vec![];
     for pair in pairs {
         if pair.as_rule() == Rule::end {
@@ -49,13 +49,23 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> Variation {
         variants.push(parse_variant(pair));
     }
 
+    // only one of the variants or the base can be active
+    let actives = variants.iter().filter(|(_, active)| *active).count();
+    let active = if base.1 {
+        assert_eq!(actives, 0);
+        0
+    } else {
+        assert_eq!(actives, 1);
+        variants.iter().position(|(_, active)| *active).unwrap() + 1
+    };
+
     let (name, tags) = parse_variation_header(header);
     Variation {
         name,
         tags,
-        base: base.as_str().to_string(),
-        variants,
-        active: 0,
+        base: base.0,
+        variants: variants.into_iter().map(|(v, _)| v).collect(),
+        active,
     }
 }
 
@@ -74,11 +84,14 @@ fn parse_variation_header(pair: pest::iterators::Pair<Rule>) -> (Option<String>,
     };
 
     let maybe_tags = pairs.peek().unwrap();
-    let tags : Vec<String> = match maybe_tags.as_rule() {
+    let tags: Vec<String> = match maybe_tags.as_rule() {
         Rule::tags => {
             // Move the iterator
             pairs.next().unwrap();
-            maybe_tags.into_inner().map(|pair| pair.as_str().to_string()).collect()
+            maybe_tags
+                .into_inner()
+                .map(|pair| pair.as_str().to_string())
+                .collect()
         }
         Rule::comment_end => vec![],
         p => unreachable!("Unexpected rule {:?}", p),
@@ -89,15 +102,26 @@ fn parse_variation_header(pair: pest::iterators::Pair<Rule>) -> (Option<String>,
     (name, tags)
 }
 
-fn parse_variant(pair: pest::iterators::Pair<Rule>) -> crate::variation::Variant {
+fn parse_base(pair: pest::iterators::Pair<Rule>) -> (String, bool) {
+    let mut pairs = pair.into_inner();
+    let body = pairs.next().unwrap();
+
+    parse_variant_body(body)
+}
+
+fn parse_variant(pair: pest::iterators::Pair<Rule>) -> (crate::variation::Variant, bool) {
     let mut pairs = pair.into_inner();
     let header = pairs.next().unwrap();
     let body = pairs.next().unwrap();
 
-    Variant {
-        name: parse_variant_header(header),
-        code: parse_variant_body(body),
-    }
+    let (code, is_active) = parse_variant_body(body);
+    (
+        Variant {
+            name: parse_variant_header(header),
+            code,
+        },
+        is_active,
+    )
 }
 
 fn parse_variant_header(pair: pest::iterators::Pair<Rule>) -> String {
@@ -109,13 +133,24 @@ fn parse_variant_header(pair: pest::iterators::Pair<Rule>) -> String {
     name.as_str().to_string()
 }
 
-fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> String {
-    let mut pairs = pair.into_inner();
-    let begin_marker = pairs.next().unwrap();
-    let body = pairs.next().unwrap();
-    let end_marker = pairs.next().unwrap();
+fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (String, bool) {
+    let body = pair.into_inner().next().unwrap();
+    match body.as_rule() {
+        Rule::inactive_variant_body => {
+            let mut pairs = body.into_inner();
+            let begin_marker = pairs.next().unwrap();
+            let body = pairs.next().unwrap();
+            let end_marker = pairs.next().unwrap();
 
-    body.as_str().to_string()
+            (body.as_str().to_string(), false)
+        }
+        Rule::active_variant_body => {
+            let mut pairs = body.into_inner();
+            let body = pairs.next().unwrap();
+            (body.as_str().to_string(), true)
+        }
+        p => unreachable!("unexpected rule {:?}", p),
+    }
 }
 
 #[cfg(test)]
@@ -421,7 +456,11 @@ else join l r
     fn test_parse_code_roundtrip() {
         let code = fs::read_to_string("test/BST.v").unwrap();
         let spans = parse_code(&code).unwrap();
-        let code = Code::new(crate::languages::Language::Coq, spans.clone(), "test/BST2.v".to_string());
+        let code = Code::new(
+            crate::languages::Language::Coq,
+            spans.clone(),
+            "test/BST2.v".to_string(),
+        );
         let code_as_str = code.to_string();
         let spans2 = parse_code(&code_as_str).unwrap();
 
@@ -430,6 +469,4 @@ else join l r
             assert_eq!(span, span2);
         }
     }
-
-    
 }

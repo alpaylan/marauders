@@ -3,9 +3,7 @@ use std::fmt::Display;
 use clap::parser;
 use pest::Parser;
 
-use crate::{
-    languages::Language, variation::Variation
-};
+use crate::{languages::Language, variation::Variation};
 
 #[derive(Debug)]
 pub struct Code {
@@ -62,12 +60,18 @@ impl Display for Code {
                 SpanContent::Constant(c) => content.push_str(c),
                 SpanContent::Variation(v) => {
                     content.push('\n');
+
+                    let mut variation_title = String::new();
+
                     if let Some(name) = &v.name {
-                        content
-                            .push_str(&self.language.variation_begin(format!("{name} ").as_str()));
-                    } else {
-                        content.push_str(&self.language.variation_begin(""));
+                        variation_title.push_str(name);
+                        variation_title.push(' ');
                     }
+
+                    if !v.tags.is_empty() {
+                        variation_title.push_str(format!("[{}] ", v.tags.join(", ")).as_str());
+                    }
+                    content.push_str(&self.language.variation_begin(&variation_title));
                     content.push('\n');
                     if v.active == 0 {
                         content.push_str(&v.base);
@@ -287,6 +291,21 @@ impl Code {
     //         path,
     //     }
     // }
+
+    pub(crate) fn get_all_variants(&self) -> Vec<String> {
+        // get all the variations in the code
+        self.parts
+            .iter()
+            .filter_map(|part| match &part.content {
+                SpanContent::Variation(v) => {
+                    let variants: Vec<String> = v.variants.iter().map(|v| v.name.clone()).collect();
+                    Some(variants)
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
 }
 
 impl Code {

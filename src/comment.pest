@@ -5,8 +5,8 @@ WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 code = { (mutation | text)+ }
 
 // Mutation ::= Inline | Variable | Variation
-mutation = { variation | inline | variable }
-
+// mutation = { variation | inline | variable }
+mutation = { variation }
 // Inline ::= COMMENT_BEGIN Tags? “!”  Text COMMENT_END
 inline = { comment_begin ~ "!" ~ text ~ comment_end }
 
@@ -14,12 +14,10 @@ inline = { comment_begin ~ "!" ~ text ~ comment_end }
 variation = { variation_header ~ base ~ variant+ ~ end }
 
 // Base ::= COMMENT_BEGIN Tags? “!” Identifier? COMMENT_END Text
-// todo: add tags
-
 variation_begin_marker = @{ comment_begin ~ "!" }
 variation_header = { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
 
-base = { text }
+base = { variant_body }
 // End ::= COMMENT_BEGIN “?” COMMENT_END
 end = @{ comment_begin ~ WHITE_SPACE ~ "!" ~ comment_end }
 
@@ -32,7 +30,10 @@ variant_header = { variant_begin_marker ~ identifier ~ comment_end }
 
 // VariantBody ::= COMMENT_BEGIN “!” Text COMMENT_END
 variant_body_begin_marker = @{ comment_begin ~ "!" }
-variant_body = { variant_body_begin_marker ~ text ~ comment_end }
+
+variant_body = { inactive_variant_body | active_variant_body }
+inactive_variant_body = { variant_body_begin_marker ~ text ~ comment_end }
+active_variant_body = { text }
 
 // Tags ::= “[“ (Tag “,”)* Tag “]”
 tags = { "[" ~ tag ~ ("," ~ tag)* ~ "]" }
@@ -56,4 +57,4 @@ comment_begin =  { "(*" | "/*" | "-{" | "|#" }
 comment_end   =  { "*)" | "*/" | "}-" | "#|" }
 
 identifier    = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
-text          = { (!(variant_body_begin_marker | comment_end) ~ ANY)+ }
+text          = { (!(variant_body_begin_marker | comment_end | end ) ~ ANY)+ }
