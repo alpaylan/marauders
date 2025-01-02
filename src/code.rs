@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use clap::parser;
-use pest::Parser;
 
 use crate::{languages::Language, variation::Variation};
 

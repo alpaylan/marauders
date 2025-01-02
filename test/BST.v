@@ -29,13 +29,13 @@ T E k v E
 (*!! insert_2 *)
 (*!
 if k <? k' then T (insert k v l) k' v' r
-  else T l k' v r
+    else T l k' v r
 *)
 (*!! insert_3 *)
 (*!
 if k <? k' then T (insert k v l) k' v' r
-  else if k' <? k then T l k' v' (insert k v r)
-  else T l k' v' r
+    else if k' <? k then T l k' v' (insert k v r)
+    else T l k' v' r
 *)
 (* !*)
 end.
@@ -55,15 +55,15 @@ Fixpoint delete (k: nat) (t: Tree) :=
   | E => E
   | T l k' v' r =>
 (*! *)
-(*!
 if k <? k' then T (delete k l) k' v' r
   else if k' <? k then T l k' v' (delete k r)
   else join l r
-*)
 (*!! delete_4 *)
+(*!
 if k <? k' then delete k l
   else if k' <? k then delete k r
   else join l r
+*)
 (*!! delete_5 *)
 (*!
 if k' <? k then T (delete k l) k' v' r

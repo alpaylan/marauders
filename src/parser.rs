@@ -13,31 +13,35 @@ pub(crate) fn parse_code(input: &str) -> anyhow::Result<Vec<Span>> {
     let pairs = pairs.next().unwrap().into_inner();
     let mut spans = vec![];
 
+    let mut line = 1;
     for pair in pairs {
-        parse_span(pair, &mut spans);
+        line += parse_span(pair, &mut spans, line);
     }
 
     Ok(spans)
 }
 
-fn parse_span(pair: pest::iterators::Pair<Rule>, spans: &mut Vec<crate::code::Span>) {
+fn parse_span(pair: pest::iterators::Pair<Rule>, spans: &mut Vec<crate::code::Span>, line: usize) -> usize {
     match pair.as_rule() {
         Rule::text => {
-            // todo: add line/column information
-            spans.push(Span::constant(pair.as_str().to_string(), 0));
+            spans.push(Span::constant(pair.as_str().to_string(), line));
+            pair.as_str().lines().count()
         }
         Rule::mutation => {
-            // todo: add line/column information
+            let (variation, current_lines) = parse_variation(pair.into_inner().next().unwrap());
             spans.push(Span::variation(
-                parse_variation(pair.into_inner().next().unwrap()),
-                0,
+                    variation,
+                    line,
             ));
+            current_lines
         }
-        _ => {}
+        _ => {
+            unreachable!("unexpected rule {:?}", pair.as_rule());
+        }
     }
 }
 
-fn parse_variation(pair: pest::iterators::Pair<Rule>) -> Variation {
+fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     let mut pairs = pair.into_inner();
     let header = pairs.next().unwrap();
     let base = parse_base(pairs.next().unwrap());
@@ -60,13 +64,34 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> Variation {
     };
 
     let (name, tags) = parse_variation_header(header);
-    Variation {
-        name,
-        tags,
-        base: base.0,
-        variants: variants.into_iter().map(|(v, _)| v).collect(),
-        active,
+
+    let mut lines = 0;
+    // Begin marker (*! *)
+    lines += 1;
+    // Base code
+    lines += base.0.lines().count();
+    // Variant codes
+    for (variant, _) in &variants {
+        // Begin marker (*!! *)
+        lines += 1;
+        // Variant code
+        lines += variant.code.lines().count();
     }
+    // End marker (* !*)
+    lines += 1;
+    // Inline markers for the passive variants
+    lines += variants.len() * 2;
+
+    (
+        Variation {
+            name,
+            tags,
+            base: base.0,
+            variants: variants.into_iter().map(|(v, _)| v).collect(),
+            active,
+        },
+        lines,
+    )
 }
 
 fn parse_variation_header(pair: pest::iterators::Pair<Rule>) -> (Option<String>, Vec<String>) {
@@ -294,6 +319,8 @@ else join l r *)
         .next()
         .unwrap()
         .into_inner();
+
+        let mut result = result.next().unwrap().into_inner();
 
         assert_eq!(result.next().unwrap().as_str(), "(*!");
         assert_eq!(

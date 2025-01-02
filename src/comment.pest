@@ -1,21 +1,20 @@
-
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 
 // Code ::= (Text | Mutation)+
 code = { (mutation | text)+ }
 
 // Mutation ::= Inline | Variable | Variation
-// mutation = { variation | inline | variable }
-mutation = { variation }
+mutation = { variation | inline | variable }
+
 // Inline ::= COMMENT_BEGIN Tags? “!”  Text COMMENT_END
-inline = { comment_begin ~ "!" ~ text ~ comment_end }
+inline = { comment_begin ~ "!" ~ comment_text ~ comment_end }
 
 // Variation ::= Base Variant+ End
 variation = { variation_header ~ base ~ variant+ ~ end }
 
 // Base ::= COMMENT_BEGIN Tags? “!” Identifier? COMMENT_END Text
 variation_begin_marker = @{ comment_begin ~ "!" }
-variation_header = { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
+variation_header       =  { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
 
 base = { variant_body }
 // End ::= COMMENT_BEGIN “?” COMMENT_END
@@ -26,14 +25,14 @@ variant = { variant_header ~ variant_body }
 
 // VariantHeader ::= COMMENT_BEGIN Tags? “!!” Identifier COMMENT_END
 variant_begin_marker = @{ comment_begin ~ "!!" }
-variant_header = { variant_begin_marker ~ identifier ~ comment_end }
+variant_header       =  { variant_begin_marker ~ identifier ~ comment_end }
 
 // VariantBody ::= COMMENT_BEGIN “!” Text COMMENT_END
 variant_body_begin_marker = @{ comment_begin ~ "!" }
 
-variant_body = { inactive_variant_body | active_variant_body }
-inactive_variant_body = { variant_body_begin_marker ~ text ~ comment_end }
-active_variant_body = { text }
+variant_body          = { inactive_variant_body | active_variant_body }
+inactive_variant_body = { variant_body_begin_marker ~ comment_text ~ comment_end }
+active_variant_body   = { text }
 
 // Tags ::= “[“ (Tag “,”)* Tag “]”
 tags = { "[" ~ tag ~ ("," ~ tag)* ~ "]" }
@@ -53,8 +52,9 @@ default_header = { comment_begin ~ "$" ~ identifier ~ comment_end }
 // DefaultBody ::= COMMENT_BEGIN “!” Text COMMENT_END
 default_body = { comment_begin ~ "!" ~ text ~ comment_end }
 
-comment_begin =  { "(*" | "/*" | "-{" | "|#" }
-comment_end   =  { "*)" | "*/" | "}-" | "#|" }
+comment_begin = { "(*" | "/*" | "-{" | "|#" }
+comment_end   = { "*)" | "*/" | "}-" | "#|" }
 
-identifier    = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
-text          = { (!(variant_body_begin_marker | comment_end | end ) ~ ANY)+ }
+identifier   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+text         =  { (!(variant_body_begin_marker | end) ~ ANY)+ }
+comment_text =  { (!comment_end ~ ANY)+ }

@@ -29,6 +29,11 @@ pub(crate) enum Command {
         #[clap(short, long)]
         variant: String,
     },
+    #[clap(name = "reset", about = "Reset all variationts to base")]
+    Reset {
+        #[clap(short, long)]
+        path: String,
+    },
 }
 
 pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
@@ -44,6 +49,10 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
         Command::Unset { path, variant } => {
             log::info!("unset active variant '{}'", variant);
             run_unset_command(path, variant)?;
+        }
+        Command::Reset { path } => {
+            log::info!("resetting all variations to base at '{}'", path);
+            run_reset_command(path)?;
         }
     }
 
@@ -142,4 +151,24 @@ fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
     );
     // todo: this is a bug, if the user unsets any variant in a variation, the whole variation gets unset, not the variant
     code.set_active_variant(variation_index, 0)
+}
+
+fn run_reset_command(path: &str) -> anyhow::Result<()> {
+    let code = &mut Code::from_file(path)?;
+
+    code.parts
+        .iter_mut()
+        .for_each(|span| match &mut span.content {
+            SpanContent::Variation(v) => {
+                v.active = 0;
+            }
+            _ => {}
+        });
+
+    code.into_file(&path)?;
+    
+    log::info!("all variations reset to base");
+    println!("all variations reset to base");
+
+    Ok(())
 }
