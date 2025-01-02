@@ -25,7 +25,58 @@ Current Capabilities:
 cargo install marauder
 ```
 
+## Usage
+
+```bash
+$ marauder --help
+> 
+Usage: marauder <COMMAND>
+    Commands:
+    list   List variations in the code
+    set    Set active variant
+    unset  Unset active variant
+    reset  Reset all variationts to base
+    help   Print this message or the help of the given subcommand(s)
+
+    Options:
+    -h, --help  Print help
+```
+
+Users can list the variations in a file or directory using the `list` command:
+
+```bash
+$ marauder list --path <path-to-file>
+> 
+    test/BST.v:21 (name: insert, active: base, variants: ["insert_1", "insert_2", "insert_3"], tags: ["new", "easy"])
+    test/BST.v:57 (name: anonymous, active: base, variants: ["delete_4", "delete_5"], tags: [])
+    test/BST.v:104 (name: anonymous, active: base, variants: ["union_6", "union_7", "union_8"], tags: [])
+```
+
+Users can set the active variant in a file or directory using the `set` command:
+
+```bash
+$ marauder set --path <path-to-file> --variant <variant-name>
+> active variant set to 'insert_1' in 'test/BST.v:21'
+```
+
+Users can unset the active variant in a file or directory using the `unset` command:
+
+```bash
+$ marauder unset --path <path-to-file>
+> active variant unset to base in 'test/BST.v:21'
+```
+
+Users can reset all variations in a file or directory using the `reset` command:
+
+```bash
+$ marauder reset --path <path-to-file>
+> all variations reset to base in 'test/BST.v'
+```
+
 ## Mutation Expressions
+
+> [!NOTE]
+> This feature is not yet implemented.
 
 Mutation expressions are a small language for expressing a sequence of mutations to apply to a file. The structure of the language is as follows:
 
@@ -75,4 +126,53 @@ fn add(a: i32, b: i32) -> i32 {
 
 This code has 1 variation, named `add_variation`, and 2 variants within the variation, named `add_mutation_1` and `add_mutation_2`. A Pest grammar of the syntax can be found at `src/comment.pest`. It is also possible to tag variations and variants with tags, as tags can be used to select specific subsets of mutations to apply.
 
+### Preprocessor Macros
+
+> [!NOTE]
+> This feature is not yet implemented.
+
+C preprocessor macros are a language independent way to express mutations in code. The syntax is as follows:
+
+```c
+int add(int a, int b) {
+    #if defined(add_variation) && !defined(add_mutation_1) && !defined(add_mutation_2)
+    return a + b;
+    #elif defined(add_mutation_1)
+    return a - b;
+    #elif defined(add_mutation_2)
+    return a * b;
+    #endif
+}
+```
+
 ### Functional Mutations
+
+> [!NOTE]
+> This feature is not yet implemented.
+
+Functional mutations are a mechanism for expressing mutations within code, using environment variables. The syntax is as follows:
+
+```rust
+fn add(a: i32, b: i32) -> i32 {
+    match std::env::var("add_variation") {
+        Ok("base") | Err(_) => a + b,
+        Ok("add_mutation_1") => a - b,
+        Ok("add_mutation_2") => a * b,
+        _ => panic!("Unknown variation"),
+    }
+}
+```
+
+The environment variable `add_variation` is used to select the variation to apply. A very
+important benefit of this mechanism is that it does not require multiple compilation steps,
+which is an issue with all other mutation types. Although, the downside is it is very intrusive within the code, reducing readability, and maintainability.
+
+### Mutation Conversion
+
+> [!NOTE]
+> This feature is not yet implemented.
+
+marauder, in addition to supporting multiple mutation syntaxes, also supports converting between them. The conversion is done by specifying the input and output syntaxes, and the tool will convert the mutations from the input syntax to the output syntax. The conversion is a crucial feature, as different mutation syntaxes have different trade-offs, and it is important to be able to switch between them. While git patches can allow writing mutations
+as if they were changes to the code, they do not allow a holistic view of the mutations as the comment syntax, which requires lots of machinery to work with as opposed to the preprocessor macros, all of which are slower to use than the functional mutations due to the need for multiple compilations.
+
+

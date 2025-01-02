@@ -102,8 +102,10 @@ Fixpoint union_ (l: Tree) (r: Tree) (f: nat) :=
     | E, _ => r
     | _, E => l
 (*! *)
+(*!
 | (T l k v r), t =>
       T (union_ l (below k t) f') k v (union_ r (above k t) f')
+*)
 (*!! union_6 *)
 (*!
 | (T l k v r), (T l' k' v' r') =>
@@ -117,13 +119,11 @@ Fixpoint union_ (l: Tree) (r: Tree) (f: nat) :=
       else union_ (T l' k' v' r') (T l k v r) f'
 *)
 (*!! union_8 *)
-(*!
 | (T l k v r), (T l' k' v' r') =>
     if k =? k'  then T (union_ l l' f') k v (union_ r r' f')
     else if k <? k'   then T (union_ l (below k l') f') k v
                             (union_ r (T (above k l') k' v' r') f')
       else union_ (T l' k' v' r') (T l k v r) f'
-*)
 (* !*)
 end
   end
