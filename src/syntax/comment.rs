@@ -181,7 +181,7 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (String, bool) {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, result};
+    use std::{fs, path::PathBuf, result};
 
     use crate::code::Code;
 
@@ -489,7 +489,7 @@ else join l r
         let code = Code::new(
             crate::languages::Language::Coq,
             spans.clone(),
-            "test/BST2.v".to_string(),
+            PathBuf::from("test/BST2.v"),
         );
         let code_as_str = code.to_string();
         let spans2 = parse_code(&code_as_str).unwrap();

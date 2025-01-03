@@ -40,7 +40,8 @@ impl Expr {
         // Distributes tags +t into (t1 + t2 + ... + tn) and *t into (t1 * t2 * ... * tn)
         let tagless_expr = self.distribute_tags(&tag_map);
         // Distributes variations v into (v1 + v2 + ... + vn)
-        let variation_distributed = tagless_expr.distribute_variations(&variation_map, &variant_list);
+        let variation_distributed =
+            tagless_expr.distribute_variations(&variation_map, &variant_list);
         // Check that all the variants in the expression are in the variant list
         let mut variants = vec![];
         variation_distributed.collect_variants(&mut variants);
@@ -178,7 +179,7 @@ impl<'a> Lexer<'a> {
                     self.input.next();
                     return Some(Token::CloseParen);
                 }
-                'a'..='z' | 'A'..='Z' | '0'..'9' | '_' => {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {
                     let mut id = String::new();
                     while let Some(&ch) = self.input.peek() {
                         if ch.is_alphanumeric() || ch == '_' {

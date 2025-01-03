@@ -1,6 +1,11 @@
+use std::path::{Path, PathBuf};
+
 use clap::Parser;
 
-use crate::code::{Code, SpanContent};
+use crate::{
+    code::{Code, SpanContent},
+    project::Project,
+};
 
 #[derive(Parser)]
 pub(crate) struct Opts {
@@ -13,37 +18,43 @@ pub(crate) enum Command {
     #[clap(name = "list", about = "List variations in the code")]
     List {
         #[clap(short, long)]
-        path: String,
+        path: PathBuf,
+        #[clap(long)]
+        pattern: Option<String>,
     },
     #[clap(name = "set", about = "Set active variant")]
     Set {
         #[clap(short, long)]
-        path: String,
+        path: PathBuf,
         #[clap(short, long)]
         variant: String,
     },
     #[clap(name = "unset", about = "Unset active variant")]
     Unset {
         #[clap(short, long)]
-        path: String,
+        path: PathBuf,
         #[clap(short, long)]
         variant: String,
     },
     #[clap(name = "reset", about = "Reset all variationts to base")]
     Reset {
         #[clap(short, long)]
-        path: String,
+        path: PathBuf,
     },
 }
 
 pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
     match &opts.command {
-        Command::List { path } => {
-            log::info!("listing variations at '{}'", path);
-            run_list_command(path)?;
+        Command::List { path, pattern } => {
+            log::info!("listing variations at '{}'", path.to_string_lossy());
+            run_list_command(path, pattern.as_deref())?;
         }
         Command::Set { path, variant } => {
-            log::info!("set active variant '{}' at '{}'", variant, path);
+            log::info!(
+                "set active variant '{}' at '{}'",
+                variant,
+                path.to_string_lossy()
+            );
             run_set_command(path, variant)?;
         }
         Command::Unset { path, variant } => {
@@ -51,7 +62,10 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
             run_unset_command(path, variant)?;
         }
         Command::Reset { path } => {
-            log::info!("resetting all variations to base at '{}'", path);
+            log::info!(
+                "resetting all variations to base at '{}'",
+                path.to_string_lossy()
+            );
             run_reset_command(path)?;
         }
     }
@@ -59,21 +73,38 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_list_command(path: &str) -> anyhow::Result<()> {
-    // todo: handle directories and recursive listing
-    let code = &mut Code::from_file(path)?;
+fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
+    let project = Project::new(path, pattern);
 
-    for span in code.parts.iter() {
-        if let SpanContent::Variation(v) = &span.content {
-            println!("{}:{} {}", path, span.line, v);
+    match project {
+        Ok(project) => {
+            for file in project.files.iter() {
+                let code = &file.code;
+
+                for span in code.parts.iter() {
+                    if let SpanContent::Variation(v) = &span.content {
+                        println!("{}:{} {}", file.path.to_string_lossy(), span.line, v);
+                    }
+                }
+            }
+        }
+        // todo: change this to a more descriptive sum type instead of an error
+        Err(_) => {
+            let code = &mut Code::from_file(path)?;
+
+            for span in code.parts.iter() {
+                if let SpanContent::Variation(v) = &span.content {
+                    println!("{}:{} {}", path.to_string_lossy(), span.line, v);
+                }
+            }
         }
     }
+
     Ok(())
 }
 
-fn run_set_command(path: &str, variant: &str) -> anyhow::Result<()> {
+fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, and do not set it again
-
     let code = &mut Code::from_file(path)?;
 
     let (variation_index, variation) = code
@@ -121,7 +152,7 @@ fn run_set_command(path: &str, variant: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
+fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, if it is not set, do not unset it
 
     let code = &mut Code::from_file(path)?;
@@ -150,7 +181,7 @@ fn run_unset_command(path: &str, variant: &str) -> anyhow::Result<()> {
     code.set_active_variant(variation_index, 0)
 }
 
-fn run_reset_command(path: &str) -> anyhow::Result<()> {
+fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     let code = &mut Code::from_file(path)?;
 
     code.parts.iter_mut().for_each(|span| {

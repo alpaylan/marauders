@@ -1,4 +1,9 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
+
+use anyhow::Context;
 
 use crate::{languages::Language, variation::Variation};
 
@@ -6,11 +11,11 @@ use crate::{languages::Language, variation::Variation};
 pub struct Code {
     pub language: Language,
     pub parts: Vec<Span>,
-    pub path: String,
+    pub path: PathBuf,
 }
 
 impl Code {
-    pub fn new(language: Language, parts: Vec<Span>, path: String) -> Code {
+    pub fn new(language: Language, parts: Vec<Span>, path: PathBuf) -> Code {
         Code {
             language,
             parts,
@@ -109,15 +114,32 @@ impl Display for Code {
 }
 
 impl Code {
-    pub(crate) fn from_file(filepath: &str) -> anyhow::Result<Code> {
+    pub(crate) fn from_file(filepath: &Path) -> anyhow::Result<Code> {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
-        let language = Code::detect_language(filepath);
+        let extension = filepath.extension().context(format!(
+            "file extension is not recornized for '{}'",
+            filepath.to_string_lossy()
+        ))?;
+
+        let language = Language::extension_to_language(extension.to_str().context(format!(
+            "extension is not valid unicode {}",
+            extension.to_string_lossy()
+        ))?);
+
+        if language.is_none() {
+            anyhow::bail!(
+                "unsupported file extension '{}'",
+                filepath.extension().unwrap().to_str().unwrap()
+            );
+        }
+        let language = language.unwrap();
+
         let spans = crate::syntax::comment::parse_code(&file_content)?;
-        Ok(Code::new(language, spans, filepath.to_string()))
+        Ok(Code::new(language, spans, filepath.to_path_buf()))
     }
 
-    pub(crate) fn save_to_file(&self, filepath: &str) -> anyhow::Result<()> {
+    pub(crate) fn save_to_file(&self, filepath: &Path) -> anyhow::Result<()> {
         // write the code to a file
         let content = format!("{}", self);
         std::fs::write(filepath, content)

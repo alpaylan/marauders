@@ -5,15 +5,14 @@ mod algebra;
 mod cli;
 mod code;
 mod languages;
+mod project;
 mod syntax;
 mod variation;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let opts = Opts::parse();
 
-    cli::run(opts)?;
-
-    Ok(())
+    cli::run(opts)
 }
