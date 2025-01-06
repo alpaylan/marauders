@@ -8,7 +8,7 @@ Current Capabilities:
 - [x] Activate a variant in a file.
 - [x] Deactivate a variant in a file.
 - [x] Reset a file to its original state.
-- [ ] Run marauder on a directory.
+- [x] Run marauder on a directory.
 - [ ] Support mutation expressions[mutation-expressions]
 - [ ] Run marauder on incremental mode[incremental-mode]
 - [ ] Run marauder on copy mode[copy-mode]
