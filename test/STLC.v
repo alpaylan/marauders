@@ -74,34 +74,34 @@ Definition shift  (d: Z) (ex: Expr) : Expr :=
     let fix go (c: Z) (e: Expr):=
         match e with 
         | Var n =>
-            (*! *)
-            if n <? Z.to_nat c then Var n
+(*! *)
+if n <? Z.to_nat c then Var n
             else Var (Z.to_nat ((Z.of_nat n) + d))
-            (*!! shift_var_none *)
-            (*!
-            Var n
-            *)
-            (*!! shift_var_all *)
-            (*!             
-            Var (Z.to_nat (Z.of_nat n + d))
-            *)
-            (*!! shift_var_leq *)
-            (*!
-            if (Z.leb (Z.of_nat n) c) then Var n
-            else Var (Z.to_nat (Z.of_nat n + d)) 
-            *)
-            (* !*)
-        | Bool b => 
+(*!! shift_var_none *)
+(*!
+Var n
+*)
+(*!! shift_var_all *)
+(*!
+Var (Z.to_nat (Z.of_nat n + d))
+*)
+(*!! shift_var_leq *)
+(*!
+if (Z.leb (Z.of_nat n) c) then Var n
+            else Var (Z.to_nat (Z.of_nat n + d))
+*)
+(* !*)
+| Bool b => 
             Bool b
         | Abs t e =>
-            (*! *)
-            Abs t (go (1 + c)%Z e)
-            (*!! shift_abs_no_incr *)
-            (*!
-            Abs t (go c e)
-            *)
-            (* !*)
-        | (App e1 e2) => 
+(*! *)
+Abs t (go (1 + c)%Z e)
+(*!! shift_abs_no_incr *)
+(*!
+Abs t (go c e)
+*)
+(* !*)
+| (App e1 e2) => 
             App (go c e1) (go c e2)
         end in
     go 0%Z ex
@@ -112,48 +112,50 @@ Definition shift  (d: Z) (ex: Expr) : Expr :=
 Fixpoint subst  (n: nat) (s: Expr) (e: Expr) : Expr :=
     match n, s, e with 
     | n, s, (Var m) =>
-        (*! *)
-        if m =? n then s
+(*! *)
+if m =? n then s
         else Var m
-        (*!! subst_var_all *)
-        (*!
-        s
-        *)
-        (*!! subst_var_none *)
-        (*!
-        Var m
-        *)
-        (* !*)
-    | _, _, (Bool b) => Bool b
+(*!! subst_var_all *)
+(*!
+s
+        
+
+*)
+(*!! subst_var_none *)
+(*!
+Var m
+*)
+(* !*)
+| _, _, (Bool b) => Bool b
     | n, s, (Abs t e) =>
-        (*! *)
-        Abs t (subst (n + 1) (shift 1 s) e)
-        (*!! subst_abs_no_shift *)
-        (*!
-        Abs t (subst (n + 1) s e)
-        *)
-        (*!! subst_abs_no_incr *)
-        (*!
-        Abs t (subst n (shift 1 s) e)
-        *)
-        (* !*)
-    | n, s, (App e1 e2) => App (subst n s e1) (subst n s e2)
+(*! *)
+Abs t (subst (n + 1) (shift 1 s) e)
+(*!! subst_abs_no_shift *)
+(*!
+Abs t (subst (n + 1) s e)
+*)
+(*!! subst_abs_no_incr *)
+(*!
+Abs t (subst n (shift 1 s) e)
+*)
+(* !*)
+| n, s, (App e1 e2) => App (subst n s e1) (subst n s e2)
     end.
 
 
 
 Definition substTop (s: Expr) (e: Expr) : Expr :=
-    (*! *)
-    shift (-1) (subst 0 (shift 1 s) e)
-    (*!! substTop_no_shift *)
-    (*!
-    subst 0 s e
-    *)
-    (*!! substTop_no_shift_back *)
-    (*!
-    subst 0 (shift 1 s) e
-    *)
-    (* !*)
+(*! *)
+shift (-1) (subst 0 (shift 1 s) e)
+(*!! substTop_no_shift *)
+(*!
+subst 0 s e
+*)
+(*!! substTop_no_shift_back *)
+(*!
+subst 0 (shift 1 s) e
+*)
+(* !*)
 .
 
 Definition fromMaybe {A} (a: A) (a' : option A) : A :=

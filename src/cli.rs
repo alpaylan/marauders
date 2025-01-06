@@ -185,40 +185,14 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
 
 fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
     // Check if there's a project config in the path
-    let cfg = fs::read_to_string(path.join("marauder.toml")).ok();
+    let project = Project::new(path, pattern)?;
 
-    let project = if let Some(cfg) = cfg {
-        log::info!("found project config at '{}'", path.to_string_lossy());
-        if pattern.is_some() {
-            // todo: allow advancing the pattern to the project config
-            log::warn!("ignoring pattern, project config found");
-        }
-        let project_config: ProjectConfig = toml::from_str(&cfg)?;
-        Project::with_config(path, &project_config)
-    } else {
-        Project::with_pattern(path, pattern)
-    };
+    for file in project.files.iter() {
+        let code = &file.code;
 
-    match project {
-        Ok(project) => {
-            for file in project.files.iter() {
-                let code = &file.code;
-
-                for span in code.spans.iter() {
-                    if let SpanContent::Variation(v) = &span.content {
-                        println!("{}:{} {}", file.path.to_string_lossy(), span.line, v);
-                    }
-                }
-            }
-        }
-        // todo: change this to a more descriptive sum type instead of an error
-        Err(_) => {
-            let code = &mut Code::from_file(path)?;
-
-            for span in code.spans.iter() {
-                if let SpanContent::Variation(v) = &span.content {
-                    println!("{}:{} {}", path.to_string_lossy(), span.line, v);
-                }
+        for span in code.spans.iter() {
+            if let SpanContent::Variation(v) = &span.content {
+                println!("{}:{} {}", file.path.to_string_lossy(), span.line, v);
             }
         }
     }
@@ -228,92 +202,131 @@ fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
 
 fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, and do not set it again
-    let code = &mut Code::from_file(path)?;
+    let project = Project::new(path, None)?;
 
-    let (variation_index, variation) = code
-        .spans
-        .iter()
-        .enumerate()
-        .find(|(_, v)| match &v.content {
-            SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
-            _ => false,
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "variant '{variant}' not found, possible variants are ({})",
-                code.get_all_variants().join(",")
-            )
-        })?;
+    let mut found = false;
+    let mut variants = vec![];
+    for file in project.files.into_iter() {
+        let mut code = file.code;
+        if let Some((variation_index, variation)) =
+            code.spans
+                .iter()
+                .enumerate()
+                .find(|(_, v)| match &v.content {
+                    SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
+                    _ => false,
+                })
+        {
+            found = true;
+            let variation = match &variation.content {
+                SpanContent::Variation(v) => v,
+                _ => unreachable!(),
+            };
 
-    let variation = match &variation.content {
-        SpanContent::Variation(v) => v,
-        _ => unreachable!(),
-    };
+            let (variant_index, _) = variation
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant)
+                .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
 
-    let (variant_index, _) = variation
-        .variants
-        .iter()
-        .enumerate()
-        .find(|(_, v)| v.name == variant)
-        .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
+            // Shift index by because 0 is reserved for the base code
+            let variant_index = variant_index + 1;
 
-    // Shift index by because 0 is reserved for the base code
-    let variant_index = variant_index + 1;
+            log::info!(
+                "variant index is '{}' at '({}, {})'",
+                variant_index,
+                variation.name.as_deref().unwrap_or("anonymous"),
+                variation_index,
+            );
 
-    log::info!(
-        "variant index is '{}' at '({}, {})'",
-        variant_index,
-        variation.name.as_deref().unwrap_or("anonymous"),
-        variation_index,
-    );
+            code.set_active_variant(variation_index, variant_index)?;
 
-    code.set_active_variant(variation_index, variant_index)?;
+            log::info!("active variant set to '{}'", variant);
+            println!("active variant set to '{}'", variant);
+        } else {
+            variants.extend(
+                code.get_all_variants()
+                    .into_iter()
+                    .map(|v| (file.path.clone(), v)),
+            );
+        }
+    }
 
-    log::info!("active variant set to '{}'", variant);
-    println!("active variant set to '{}'", variant);
+    if !found {
+        log::error!(
+            "variant '{variant}' not found, possible variants are (\n{}\n)",
+            variants
+                .iter()
+                .map(|(path, v)| format!("\t'{}' at '{}'", v, path.to_string_lossy()))
+                .collect::<Vec<String>>()
+                .join(",\n")
+        )
+    }
 
     Ok(())
 }
 
 fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, if it is not set, do not unset it
+    let project = Project::new(path, None)?;
 
-    let code = &mut Code::from_file(path)?;
+    let mut found = false;
+    let mut variants = vec![];
 
-    let (variation_index, variation) = code
-        .spans
-        .iter()
-        .enumerate()
-        .find(|(_, v)| match &v.content {
-            SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
-            _ => false,
-        })
-        .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
+    for file in project.files.into_iter() {
+        let mut code = file.code;
+        if let Some((variation_index, variation)) =
+            code.spans
+                .iter()
+                .enumerate()
+                .find(|(_, v)| match &v.content {
+                    SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
+                    _ => false,
+                })
+        {
+            found = true;
+            let variation = match &variation.content {
+                SpanContent::Variation(v) => v,
+                _ => unreachable!(),
+            };
 
-    let variation = match &variation.content {
-        SpanContent::Variation(v) => v,
-        _ => unreachable!(),
-    };
+            log::info!(
+                "variant is '({}, {})'",
+                variation.name.as_deref().unwrap_or("anonymous"),
+                variation_index,
+            );
 
-    log::info!(
-        "variation is '({}, {})'",
-        variation.name.as_deref().unwrap_or("anonymous"),
-        variation_index,
-    );
-    // todo: this is a bug, if the user unsets any variant in a variation, the whole variation gets unset, not the variant
-    code.set_active_variant(variation_index, 0)
+            code.set_active_variant(variation_index, 0)?;
+
+            log::info!("active variant unset");
+            println!("active variant unset");
+        } else {
+            variants.extend(
+                code.get_all_variants()
+                    .into_iter()
+                    .map(|v| (file.path.clone(), v)),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn run_reset_command(path: &Path) -> anyhow::Result<()> {
-    let code = &mut Code::from_file(path)?;
 
-    code.spans.iter_mut().for_each(|span| {
-        if let SpanContent::Variation(v) = &mut span.content {
-            v.active = 0;
-        }
-    });
+    let project = Project::new(path, None)?;
 
-    code.save_to_file(path)?;
+    for file in project.files.into_iter() {
+        let mut code = file.code;
+        code.spans.iter_mut().for_each(|span| {
+            if let SpanContent::Variation(v) = &mut span.content {
+                v.active = 0;
+            }
+        });
+
+        code.save_to_file(&file.path)?;
+    }
 
     log::info!("all variations reset to base");
     println!("all variations reset to base");
