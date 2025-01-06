@@ -1,0 +1,9 @@
+languages = ["Rust", "Coq"]
+ignore = []
+use_gitignore = true
+
+[[custom_languages]]
+name = "Javascript"
+extension = "js"
+comment_begin = "/*"
+comment_end = "*/"

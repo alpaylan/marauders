@@ -10,15 +10,15 @@ use crate::{languages::Language, variation::Variation};
 #[derive(Debug)]
 pub struct Code {
     pub language: Language,
-    pub parts: Vec<Span>,
+    pub spans: Vec<Span>,
     pub path: PathBuf,
 }
 
 impl Code {
-    pub fn new(language: Language, parts: Vec<Span>, path: PathBuf) -> Code {
+    pub fn new(language: Language, spans: Vec<Span>, path: PathBuf) -> Code {
         Code {
             language,
-            parts,
+            spans,
             path,
         }
     }
@@ -57,7 +57,7 @@ pub enum SpanContent {
 impl Display for Code {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut content = String::new();
-        for part in &self.parts {
+        for part in &self.spans {
             match &part.content {
                 SpanContent::Constant(c) => content.push_str(c),
                 SpanContent::Variation(v) => {
@@ -122,10 +122,14 @@ impl Code {
             filepath.to_string_lossy()
         ))?;
 
-        let language = Language::extension_to_language(extension.to_str().context(format!(
-            "extension is not valid unicode {}",
-            extension.to_string_lossy()
-        ))?);
+        // todo: add support for custom languages
+        let language = Language::extension_to_language(
+            extension.to_str().context(format!(
+                "extension is not valid unicode {}",
+                extension.to_string_lossy()
+            ))?,
+            &vec![],
+        );
 
         if language.is_none() {
             anyhow::bail!(
@@ -148,12 +152,13 @@ impl Code {
 
     pub(crate) fn detect_language(filepath: &str) -> Language {
         let ext = filepath.split('.').last().unwrap().to_string();
-        Language::extension_to_language(&ext).unwrap()
+        // todo: add support for custom languages
+        Language::extension_to_language(&ext, &vec![]).unwrap()
     }
 
     pub(crate) fn get_all_variants(&self) -> Vec<String> {
         // get all the variations in the code
-        self.parts
+        self.spans
             .iter()
             .filter_map(|part| match &part.content {
                 SpanContent::Variation(v) => {
@@ -192,7 +197,7 @@ impl Code {
             variant_index,
             variation_index
         );
-        match self.parts[variation_index].content {
+        match self.spans[variation_index].content {
             SpanContent::Variation(ref mut v) => {
                 v.active = variant_index;
             }

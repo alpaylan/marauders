@@ -1,6 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::{code::Code, languages::Language};
+use ignore::{overrides::OverrideBuilder, WalkBuilder};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    code::Code,
+    languages::{CustomLanguage, Language},
+};
 
 #[derive(Debug)]
 pub(crate) struct Project {
@@ -14,34 +20,115 @@ pub(crate) struct ProjectFile {
     pub(crate) code: Code,
 }
 
+/// Project configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ProjectConfig {
+    /// List of languages that should be analyzed for mutations
+    pub(crate) languages: Vec<Language>,
+    /// List of glob strings to ignore
+    pub(crate) ignore: Vec<String>,
+    /// Whether to ignore files based on .gitignore
+    pub(crate) use_gitignore: bool,
+    /// Custom languages outside of the standart set
+    pub(crate) custom_languages: Vec<CustomLanguage>,
+}
+
+impl Default for ProjectConfig {
+    fn default() -> Self {
+        ProjectConfig {
+            languages: vec![],
+            ignore: vec![],
+            use_gitignore: true,
+            custom_languages: vec![],
+        }
+    }
+}
+
 impl Project {
-    pub(crate) fn new(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
+    pub(crate) fn with_pattern(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
         let root = PathBuf::from(path);
 
-        // Check that the path is a directory
-        if !root.is_dir() {
-            anyhow::bail!("'{}' is not a directory", path.to_string_lossy());
+        let mut overrides = OverrideBuilder::new(path);
+
+        if let Some(s) = pattern {
+            overrides.add(s)?;
         }
 
-        let files = glob::glob(path.join(pattern.unwrap_or("**/*")).to_str().unwrap())
-            .expect("Failed to read glob pattern")
-            .filter_map(Result::ok)
-            .filter_map(|path| {
-                let code = Code::from_file(&path);
+        let walk = WalkBuilder::new(path).overrides(overrides.build()?).build();
+
+        let files = walk
+            .filter_map(|entry| {
+                let entry = entry.unwrap();
+                let code = Code::from_file(entry.path());
                 match code {
-                    Ok(code) => Some(ProjectFile { path, code }),
+                    Ok(code) => Some(ProjectFile {
+                        path: entry.path().to_path_buf(),
+                        code,
+                    }),
                     Err(err) => {
-                        log::error!("could not read file '{}': {}", path.to_string_lossy(), err);
+                        log::error!(
+                            "could not read file '{}': {}",
+                            entry.path().to_string_lossy(),
+                            err
+                        );
                         None
                     }
                 }
             })
             .collect();
+
+        Ok(Project { root, files })
+    }
+
+    pub(crate) fn with_config(path: &Path, config: &ProjectConfig) -> anyhow::Result<Self> {
+        let root = PathBuf::from(path);
+
+        let mut overrides = OverrideBuilder::new(path);
+
+        // Add ignore patterns
+        for ignore in &config.ignore {
+            overrides.add(format!("!{ignore}").as_str())?;
+        }
+        // Add language patterns
+        for lang in &config.languages {
+            overrides.add(format!("**/*.{}", lang.file_extension()).as_str())?;
+        }
+        // Add custom language patterns
+        for custom in &config.custom_languages {
+            overrides.add(format!("**/*.{}", custom.extension).as_str())?;
+        }
+
+        let walk = WalkBuilder::new(path)
+            .git_ignore(config.use_gitignore)
+            .overrides(overrides.build()?)
+            .build();
+
+        let files = walk
+            .filter_map(|entry| {
+                let entry = entry.unwrap();
+                let code = Code::from_file(entry.path());
+                match code {
+                    Ok(code) => Some(ProjectFile {
+                        path: entry.path().to_path_buf(),
+                        code,
+                    }),
+                    Err(err) => {
+                        log::error!(
+                            "could not read file '{}': {}",
+                            entry.path().to_string_lossy(),
+                            err
+                        );
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<ProjectFile>>();
+
         Ok(Project { root, files })
     }
 
     pub(crate) fn with_language(path: &Path, lang: &Language) -> anyhow::Result<Self> {
-        Self::new(
+        Self::with_pattern(
             path,
             Some(format!("**/*.{}", lang.file_extension()).as_str()),
         )
@@ -54,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_project_new() {
-        let project = Project::new(Path::new("test"), None).unwrap();
+        let project = Project::with_pattern(Path::new("test"), None).unwrap();
         assert_eq!(project.root, PathBuf::from("test"));
         assert_eq!(project.files.len(), 3);
         let file_paths = project
@@ -69,16 +156,19 @@ mod tests {
 
     #[test]
     fn test_project_recursive() {
-        let project = Project::new(Path::new("."), None).unwrap();
+        let project = Project::with_pattern(Path::new("."), None).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
         let file_paths = project
             .files
             .iter()
-            .map(|f| f.path.clone())
+            .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
-        println!("{:?}", file_paths);
-        assert!(file_paths.contains(&PathBuf::from("test/BST.v")));
-        assert!(file_paths.contains(&PathBuf::from("src/syntax/comment.rs")));
+        assert!(file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(
+            &PathBuf::from("src/syntax/comment.rs")
+                .canonicalize()
+                .unwrap()
+        ));
     }
 
     #[test]
@@ -88,9 +178,93 @@ mod tests {
         let file_paths = project
             .files
             .iter()
-            .map(|f| f.path.clone())
+            .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
-        assert!(file_paths.contains(&PathBuf::from("test/BST.v")));
-        assert!(file_paths.contains(&PathBuf::from("test/STLC.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/STLC.v").canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn test_project_config() {
+        let config = ProjectConfig {
+            languages: vec![Language::Rust],
+            ignore: vec!["src/syntax".to_string()],
+            use_gitignore: false,
+            custom_languages: vec![],
+        };
+        let project = Project::with_config(Path::new("."), &config).unwrap();
+        assert_eq!(project.root, PathBuf::from("."));
+
+        let file_paths = project
+            .files
+            .iter()
+            .map(|f| f.path.clone().canonicalize().unwrap())
+            .collect::<Vec<_>>();
+        assert!(file_paths.contains(&PathBuf::from("src/cli.rs").canonicalize().unwrap()));
+        assert!(!file_paths.contains(
+            &PathBuf::from("./src/syntax/comment.rs")
+                .canonicalize()
+                .unwrap()
+        ));
+        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn test_project_config_gitignore() {
+        let config = ProjectConfig {
+            languages: vec![Language::Rust],
+            ignore: vec!["src/syntax".to_string()],
+            use_gitignore: true,
+            custom_languages: vec![],
+        };
+        let project = Project::with_config(Path::new("."), &config).unwrap();
+        assert_eq!(project.root, PathBuf::from("."));
+
+        let file_paths = project
+            .files
+            .iter()
+            .map(|f| f.path.clone().canonicalize().unwrap())
+            .collect::<Vec<_>>();
+        assert!(file_paths.contains(&PathBuf::from("src/cli.rs").canonicalize().unwrap()));
+        assert!(!file_paths.contains(
+            &PathBuf::from("./src/syntax/comment.rs")
+                .canonicalize()
+                .unwrap()
+        ));
+        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(
+            &PathBuf::from("target/package/marauder-0.0.1/src/cli.rs")
+                .canonicalize()
+                .unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_project_config_custom_language() {
+        let config = ProjectConfig {
+            languages: vec![],
+            ignore: vec!["src/syntax".to_string()],
+            use_gitignore: false,
+            custom_languages: vec![CustomLanguage {
+                name: "Marauder".to_string(),
+                extension: "rs".to_string(),
+                comment_begin: "/*".to_string(),
+                comment_end: "*/".to_string(),
+            }],
+        };
+        let project = Project::with_config(Path::new("."), &config).unwrap();
+        assert_eq!(project.root, PathBuf::from("."));
+        let file_paths = project
+            .files
+            .iter()
+            .map(|f| f.path.clone().canonicalize().unwrap())
+            .collect::<Vec<_>>();
+        assert!(file_paths.contains(&PathBuf::from("src/cli.rs").canonicalize().unwrap()));
+        assert!(!file_paths.contains(
+            &PathBuf::from("./src/syntax/comment.rs")
+                .canonicalize()
+                .unwrap()
+        ));
+        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
     }
 }

@@ -1,9 +1,20 @@
-#[derive(Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum Language {
     Coq,
     Haskell,
     Racket,
     Rust,
+    Custom(CustomLanguage),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct CustomLanguage {
+    pub name: String,
+    pub extension: String,
+    pub comment_begin: String,
+    pub comment_end: String,
 }
 
 impl Language {
@@ -13,16 +24,47 @@ impl Language {
             Language::Haskell => "hs",
             Language::Racket => "rkt",
             Language::Rust => "rs",
+            Language::Custom(custom) => custom.extension.as_str(),
         }
     }
 
-    pub fn extension_to_language(ext: &str) -> Option<Language> {
+    pub fn extension_to_language(
+        ext: &str,
+        custom_languages: &Vec<CustomLanguage>,
+    ) -> Option<Language> {
         match ext {
             "v" => Some(Language::Coq),
             "hs" => Some(Language::Haskell),
             "rkt" => Some(Language::Racket),
             "rs" => Some(Language::Rust),
-            _ => None,
+            _ => {
+                for custom in custom_languages {
+                    if custom.extension == ext {
+                        return Some(Language::Custom(custom.clone()));
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    pub fn name_to_language(
+        name: &str,
+        custom_languages: &Vec<CustomLanguage>,
+    ) -> Option<Language> {
+        match name.to_lowercase().as_str() {
+            "coq" => Some(Language::Coq),
+            "haskell" => Some(Language::Haskell),
+            "racket" => Some(Language::Racket),
+            "rust" => Some(Language::Rust),
+            _ => {
+                for custom in custom_languages {
+                    if custom.name == name {
+                        return Some(Language::Custom(custom.clone()));
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -32,6 +74,7 @@ impl Language {
             Language::Haskell => "-{".to_string(),
             Language::Racket => "|#".to_string(),
             Language::Rust => "/*".to_string(),
+            Language::Custom(custom) => custom.comment_begin.clone(),
         }
     }
 
@@ -41,6 +84,7 @@ impl Language {
             Language::Haskell => "}-".to_string(),
             Language::Racket => "#|".to_string(),
             Language::Rust => "*/".to_string(),
+            Language::Custom(custom) => custom.comment_end.clone(),
         }
     }
 
