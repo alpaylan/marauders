@@ -50,7 +50,6 @@ impl Expr {
                 anyhow::bail!("Variant {} is not in the variant list", variant);
             }
         }
-        println!("{}", variation_distributed);
         let variation_distributed = variation_distributed.distribute();
 
         Ok(variation_distributed)

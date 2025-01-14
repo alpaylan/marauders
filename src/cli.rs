@@ -6,10 +6,27 @@ use std::{
 use clap::Parser;
 
 use crate::{
-    code::{Code, SpanContent},
+    code::SpanContent,
     languages::Language,
     project::{Project, ProjectConfig},
 };
+
+mod algebra;
+mod code;
+mod languages;
+mod project;
+mod syntax;
+mod variation;
+
+fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
+    let opts = Opts::parse();
+
+    run(opts)
+}
+
+
 
 #[derive(Parser)]
 pub(crate) struct Opts {
