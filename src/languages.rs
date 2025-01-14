@@ -10,11 +10,12 @@ pub enum Language {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub(crate) struct CustomLanguage {
+pub struct CustomLanguage {
     pub name: String,
     pub extension: String,
     pub comment_begin: String,
     pub comment_end: String,
+    pub mutation_marker: String,
 }
 
 impl Language {
@@ -89,15 +90,15 @@ impl Language {
     }
 
     pub fn variation_begin(&self, name: &str) -> String {
-        format!(r"{}! {}{}", self.comment_begin(), name, self.comment_end())
+        format!(r"{}{} {}{}", self.comment_begin(), self.mutation_marker(), name, self.comment_end())
     }
 
     pub fn variation_end(&self) -> String {
-        format!("{} !{}", self.comment_begin(), self.comment_end())
+        format!("{} {}{}", self.comment_begin(), self.mutation_marker(), self.comment_end())
     }
 
     pub fn variant_header_begin(&self) -> String {
-        format!("{}!!", self.comment_begin())
+        format!("{}{}{}", self.comment_begin(), self.mutation_marker(), self.mutation_marker())
     }
 
     pub fn variant_header_end(&self) -> String {
@@ -105,10 +106,20 @@ impl Language {
     }
 
     pub fn variant_body_begin(&self) -> String {
-        format!("{}!", self.comment_begin())
+        format!("{}{}", self.comment_begin(), self.mutation_marker())
     }
 
     pub fn variant_body_end(&self) -> String {
         self.comment_end()
+    }
+
+    pub fn mutation_marker(&self) -> &str {
+        match self {
+            Language::Coq |
+            Language::Haskell |
+            Language::Racket => "!",
+            Language::Rust => "|",
+            Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
+        }
     }
 }

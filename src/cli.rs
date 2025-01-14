@@ -125,6 +125,8 @@ pub(crate) enum ConfigCommand {
         comment_begin: String,
         #[clap(short = 'e', long)]
         comment_end: String,
+        #[clap(short = 'm', long)]
+        mutation_marker: String,
     },
     #[clap(
         name = "remove-custom-language",
@@ -414,6 +416,7 @@ fn run_config_command(config_command: &ConfigCommand) -> anyhow::Result<()> {
             extension,
             comment_begin,
             comment_end,
+            mutation_marker,
             ..
         } => {
             if project_config
@@ -431,6 +434,7 @@ fn run_config_command(config_command: &ConfigCommand) -> anyhow::Result<()> {
                     extension: extension.clone(),
                     comment_begin: comment_begin.clone(),
                     comment_end: comment_end.clone(),
+                    mutation_marker: mutation_marker.clone(),
                 });
         }
         ConfigCommand::RemoveCustomLanguage { name, .. } => {

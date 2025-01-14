@@ -274,6 +274,7 @@ mod tests {
                 extension: "rs".to_string(),
                 comment_begin: "/*".to_string(),
                 comment_end: "*/".to_string(),
+                mutation_marker: "|".to_string(),
             }],
         };
         let project = Project::with_config(Path::new("."), &config).unwrap();

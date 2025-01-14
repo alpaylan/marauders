@@ -492,6 +492,7 @@ else join l r
             PathBuf::from("test/BST2.v"),
         );
         let code_as_str = code.to_string();
+        println!("{}", code_as_str);
         let spans2 = parse_code(&code_as_str).unwrap();
 
         assert_eq!(spans.len(), spans2.len());
