@@ -50,9 +50,10 @@ impl Expr {
                 anyhow::bail!("Variant {} is not in the variant list", variant);
             }
         }
+        println!("{}", variation_distributed);
+        let variation_distributed = variation_distributed.distribute();
 
-        // Collect the sum of products
-        todo!()
+        Ok(variation_distributed)
     }
 
     fn collect_variants(&self, variants: &mut Vec<String>) {
@@ -127,15 +128,44 @@ impl Expr {
             Expr::USum(_) | Expr::UProduct(_) => {
                 unreachable!("Unary expressions are elimiated in [distributed_tags] phase")
             }
-            Expr::Id(id) => {
-                let ids = vec![];
-                let ids: &Vec<String> = variation_map.get(id).unwrap_or(&ids);
-                let mut sum = Expr::Id(ids[0].clone());
-                for id in ids.iter().skip(1) {
-                    sum = Expr::Sum(Box::new(sum), Box::new(Expr::Id(id.clone())));
+            Expr::Id(id) => match variation_map.get(id) {
+                Some(ids) => {
+                    let mut sum = Expr::Id(ids[0].clone());
+                    for id in ids.iter().skip(1) {
+                        sum = Expr::Sum(Box::new(sum), Box::new(Expr::Id(id.clone())));
+                    }
+                    sum
                 }
-                sum
+                None => Expr::Id(id.clone()),
+            },
+        }
+    }
+
+    fn distribute(&self) -> Vec<Vec<String>> {
+        match self {
+            Expr::Product(lhs, rhs) => {
+                let lhs = lhs.distribute();
+                let rhs = rhs.distribute();
+                let mut result = vec![];
+                for l in lhs.iter() {
+                    for r in rhs.iter() {
+                        let mut sum = l.clone();
+                        sum.extend(r.iter().cloned());
+                        result.push(sum);
+                    }
+                }
+                result
             }
+            Expr::Sum(lhs, rhs) => {
+                let mut lhs = lhs.distribute();
+                let rhs = rhs.distribute();
+                lhs.extend(rhs);
+                lhs
+            }
+            Expr::USum(_) | Expr::UProduct(_) => {
+                unreachable!("Unary expressions are elimiated in [distributed_tags] phase")
+            }
+            Expr::Id(id) => vec![vec![id.clone()]],
         }
     }
 }
@@ -360,6 +390,70 @@ mod tests {
                 Box::new(Expr::USum("easy".to_string())),
                 Box::new(Expr::Id("insert".to_string()))
             )
+        );
+    }
+
+    #[test]
+    fn test_unary_expr_paren() {
+        let input = "+easy * (insert + delete)";
+        let mut parser = Parser::new(input);
+        let expr = parser.parse();
+        assert_eq!(
+            expr,
+            Expr::Product(
+                Box::new(Expr::USum("easy".to_string())),
+                Box::new(Expr::Sum(
+                    Box::new(Expr::Id("insert".to_string())),
+                    Box::new(Expr::Id("delete".to_string()))
+                ))
+            )
+        );
+    }
+
+    #[test]
+    fn test_distribute_tags() {
+        let input = "+easy * (insert + delete)";
+        let mut parser = Parser::new(input);
+        let expr = parser.parse();
+        let tag_map = vec![("easy".to_string(), vec!["a".to_string(), "b".to_string()])]
+            .into_iter()
+            .collect();
+        let variation_map = vec![
+            (
+                "insert".to_string(),
+                vec!["insert_1".to_string(), "insert_2".to_string()],
+            ),
+            (
+                "delete".to_string(),
+                vec!["delete_1".to_string(), "delete_2".to_string()],
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let variant_list = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "insert_1".to_string(),
+            "insert_2".to_string(),
+            "delete_1".to_string(),
+            "delete_2".to_string(),
+        ];
+        let sum_of_products = expr
+            .into_sum_of_products(tag_map, variation_map, variant_list)
+            .unwrap();
+        assert_eq!(
+            sum_of_products,
+            vec![
+                vec!["a".to_string(), "insert_1".to_string()],
+                vec!["a".to_string(), "insert_2".to_string()],
+                vec!["a".to_string(), "delete_1".to_string()],
+                vec!["a".to_string(), "delete_2".to_string()],
+                vec!["b".to_string(), "insert_1".to_string()],
+                vec!["b".to_string(), "insert_2".to_string()],
+                vec!["b".to_string(), "delete_1".to_string()],
+                vec!["b".to_string(), "delete_2".to_string()],
+            ]
         );
     }
 }
