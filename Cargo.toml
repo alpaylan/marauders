@@ -1,6 +1,6 @@
 [package]
 name = "marauders"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "A work-in-progress code mutation tool"
 license = "MIT"

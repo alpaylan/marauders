@@ -1,5 +1,7 @@
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 
+MUTANT_MARKER = _{ "!" | "|" }
+
 // Code ::= (Text | Mutation)+
 code = { (mutation | text)+ }
 
@@ -7,28 +9,28 @@ code = { (mutation | text)+ }
 mutation = { variation | inline | variable }
 
 // Inline ::= COMMENT_BEGIN Tags? “!”  Text COMMENT_END
-inline = { comment_begin ~ "!" ~ comment_text ~ comment_end }
+inline = { comment_begin ~ MUTANT_MARKER ~ comment_text ~ comment_end }
 
 // Variation ::= Base Variant+ End
 variation = { variation_header ~ base ~ variant+ ~ end }
 
 // Base ::= COMMENT_BEGIN Tags? “!” Identifier? COMMENT_END Text
-variation_begin_marker = @{ comment_begin ~ "!" }
+variation_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
 variation_header       =  { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
 
 base = { variant_body }
 // End ::= COMMENT_BEGIN “?” COMMENT_END
-end = @{ comment_begin ~ WHITE_SPACE ~ "!" ~ comment_end }
+end = @{ comment_begin ~ WHITE_SPACE ~ MUTANT_MARKER ~ comment_end }
 
 // Variant ::= VariantHeader VariantBody
 variant = { variant_header ~ variant_body }
 
 // VariantHeader ::= COMMENT_BEGIN Tags? “!!” Identifier COMMENT_END
-variant_begin_marker = @{ comment_begin ~ "!!" }
+variant_begin_marker = @{ comment_begin ~ MUTANT_MARKER{2} }
 variant_header       =  { variant_begin_marker ~ identifier ~ comment_end }
 
 // VariantBody ::= COMMENT_BEGIN “!” Text COMMENT_END
-variant_body_begin_marker = @{ comment_begin ~ "!" }
+variant_body_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
 
 variant_body          = { inactive_variant_body | active_variant_body }
 inactive_variant_body = { variant_body_begin_marker ~ comment_text ~ comment_end }
@@ -50,7 +52,7 @@ default = { default_header ~ default_body }
 default_header = { comment_begin ~ "$" ~ identifier ~ comment_end }
 
 // DefaultBody ::= COMMENT_BEGIN “!” Text COMMENT_END
-default_body = { comment_begin ~ "!" ~ text ~ comment_end }
+default_body = { comment_begin ~ MUTANT_MARKER ~ text ~ comment_end }
 
 comment_begin = { "(*" | "/*" | "-{" | "|#" }
 comment_end   = { "*)" | "*/" | "}-" | "#|" }

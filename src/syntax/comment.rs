@@ -499,4 +499,71 @@ else join l r
             assert_eq!(span, span2);
         }
     }
+
+    #[test]
+    fn test_alternative_mutation_marker() {
+        let result = Parser::parse(
+            Rule::code,
+            r#"Fixpoint delete (k: nat) (t: Tree) :=
+  match t with
+  | E => E
+  | T l k' v' r =>
+  (*| *)
+  if k <? k' then T (delete k l) k' v' r
+  else if k' <? k then T l k' v' (delete k r)
+  else join l r
+  (*|| delete_4 *)
+  (*|
+  if k <? k' then delete k l
+  else if k' <? k then delete k r
+  else join l r
+  *)
+  (*|| delete_5 *)
+  (*|
+  if k' <? k then T (delete k l) k' v' r
+  else if k <? k' then T l k' v' (delete k r)
+  else join l r
+  *)
+  (* |*)
+  end."#,
+        )
+        .unwrap()
+        .next()
+        .unwrap();
+
+        assert!(result.as_rule() == Rule::code);
+        let mut result = result.into_inner();
+        let s1 = result.next().unwrap();
+        assert_eq!(s1.as_rule(), Rule::text);
+        assert_eq!(
+            s1.as_str(),
+            r#"Fixpoint delete (k: nat) (t: Tree) :=
+  match t with
+  | E => E
+  | T l k' v' r =>"#
+        );
+
+        let s2 = result.next().unwrap();
+        assert_eq!(s2.as_rule(), Rule::mutation);
+        assert_eq!(
+            s2.as_str(),
+            r#"(*| *)
+  if k <? k' then T (delete k l) k' v' r
+  else if k' <? k then T l k' v' (delete k r)
+  else join l r
+  (*|| delete_4 *)
+  (*|
+  if k <? k' then delete k l
+  else if k' <? k then delete k r
+  else join l r
+  *)
+  (*|| delete_5 *)
+  (*|
+  if k' <? k then T (delete k l) k' v' r
+  else if k <? k' then T l k' v' (delete k r)
+  else join l r
+  *)
+  (* |*)"#
+        );
+    }
 }

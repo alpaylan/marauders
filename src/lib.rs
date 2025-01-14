@@ -1,7 +1,7 @@
 
-mod algebra;
-mod code;
-mod languages;
-mod syntax;
-mod project;
-mod variation;
+pub mod algebra;
+pub mod code;
+pub mod languages;
+pub mod syntax;
+pub mod project;
+pub mod variation;
