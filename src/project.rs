@@ -1,8 +1,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
+use anyhow::Context;
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -104,10 +106,6 @@ impl Project {
 
         let mut overrides = OverrideBuilder::new(path);
 
-        // Add ignore patterns
-        for ignore in &config.ignore {
-            overrides.add(format!("!{ignore}").as_str())?;
-        }
         // Add language patterns
         for lang in &config.languages {
             overrides.add(format!("**/*.{}", lang.file_extension()).as_str())?;
@@ -115,6 +113,11 @@ impl Project {
         // Add custom language patterns
         for custom in &config.custom_languages {
             overrides.add(format!("**/*.{}", custom.extension).as_str())?;
+        }
+
+        // Add ignore patterns
+        for ignore in &config.ignore {
+            overrides.add(format!("!{ignore}").as_str())?;
         }
 
         let walk = WalkBuilder::new(path)
@@ -179,13 +182,14 @@ mod tests {
 
     #[test]
     fn test_project_recursive() {
-        let project = Project::with_pattern(Path::new("."), None).unwrap();
+        let project = Project::with_pattern(Path::new("."), Some("!src/lib.rs")).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
         let file_paths = project
             .files
             .iter()
             .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
+
         assert!(file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
         assert!(file_paths.contains(
             &PathBuf::from("src/syntax/comment.rs")
@@ -211,7 +215,7 @@ mod tests {
     fn test_project_config() {
         let config = ProjectConfig {
             languages: vec![Language::Rust],
-            ignore: vec!["src/syntax".to_string()],
+            ignore: vec!["src/syntax".to_string(), "**/src/lib.rs".to_string()],
             use_gitignore: false,
             custom_languages: vec![],
         };
@@ -236,7 +240,7 @@ mod tests {
     fn test_project_config_gitignore() {
         let config = ProjectConfig {
             languages: vec![Language::Rust],
-            ignore: vec!["src/syntax".to_string()],
+            ignore: vec!["src/syntax".to_string(), "src/lib.rs".to_string()],
             use_gitignore: true,
             custom_languages: vec![],
         };
@@ -267,8 +271,8 @@ mod tests {
     fn test_project_config_custom_language() {
         let config = ProjectConfig {
             languages: vec![],
-            ignore: vec!["src/syntax".to_string()],
-            use_gitignore: false,
+            ignore: vec!["src/syntax".to_string(), "src/lib.rs".to_string()],
+            use_gitignore: true,
             custom_languages: vec![CustomLanguage {
                 name: "Marauder".to_string(),
                 extension: "rs".to_string(),
