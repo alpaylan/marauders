@@ -6,6 +6,7 @@ pub enum Language {
     Haskell,
     Racket,
     Rust,
+    #[serde(untagged)]
     Custom(CustomLanguage),
 }
 

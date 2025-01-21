@@ -1,9 +1,10 @@
-languages = ["Rust", "Coq"]
+languages = ["Rust"]
 ignore = []
-use_gitignore = true
+use_gitignore = false
 
 [[custom_languages]]
-name = "Javascript"
-extension = "js"
-comment_begin = "/*"
-comment_end = "*/"
+name = "KelesLisp"
+extension = "kl"
+comment_begin = "#|"
+comment_end = "|#"
+mutation_marker = "!"

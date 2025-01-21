@@ -1,0 +1,11 @@
+
+(define fact 
+    (lambda (n) 
+        (if (eq n 0) 
+        #|! fact |#
+            1
+        #|!! fact_1 |#
+        #|! 2 |#
+        #| !|#
+            (* n (fact (- n 1))))))
+(fact 5)

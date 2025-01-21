@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 
-use crate::{languages::Language, variation::Variation};
+use crate::{languages::{CustomLanguage, Language}, variation::Variation};
 
 #[derive(Debug)]
 pub struct Code {
@@ -114,7 +114,7 @@ impl Display for Code {
 }
 
 impl Code {
-    pub(crate) fn from_file(filepath: &Path) -> anyhow::Result<Code> {
+    pub(crate) fn from_file(filepath: &Path, custom_languages: &Vec<CustomLanguage>) -> anyhow::Result<Code> {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
         let extension = filepath.extension().context(format!(
@@ -128,7 +128,7 @@ impl Code {
                 "extension is not valid unicode {}",
                 extension.to_string_lossy()
             ))?,
-            &vec![],
+            custom_languages,
         );
 
         if language.is_none() {

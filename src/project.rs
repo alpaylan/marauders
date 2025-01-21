@@ -80,7 +80,7 @@ impl Project {
         let files = walk
             .filter_map(|entry| {
                 let entry = entry.unwrap();
-                let code = Code::from_file(entry.path());
+                let code = Code::from_file(entry.path(), &vec![]);
                 match code {
                     Ok(code) => Some(ProjectFile {
                         path: entry.path().to_path_buf(),
@@ -132,7 +132,7 @@ impl Project {
                     return None;
                 }
 
-                let code = Code::from_file(entry.path());
+                let code = Code::from_file(entry.path(), &config.custom_languages);
                 match code {
                     Ok(code) => Some(ProjectFile {
                         path: entry.path().to_path_buf(),
