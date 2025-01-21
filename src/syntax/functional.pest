@@ -1,0 +1,30 @@
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = { "#|" ~ (!"|#" ~ ANY)* ~ "|#" }
+
+code = _{ expression+ }
+
+expression = {
+    ("(" ~ (define | lambda | ite | mutate | call | begin | apply) ~ ")")
+  | number
+  | boolean
+  | symbol
+  | string
+}
+
+define   = { "define" ~ symbol ~ expression }
+lambda   = { "lambda" ~ "(" ~ symbol* ~ ")" ~ expression }
+ite      = { "if" ~ expression ~ expression ~ expression }
+call     = { identifier ~ expression* }
+apply    = { expression+ }
+begin    = { "begin" ~ expression+ }
+mutate   = { "mutate" ~ string? ~ mutation+ }
+mutation = { "(" ~ string ~ expression ~ ")" }
+
+symbol =  { identifier }
+number = @{ DECIMAL_NUMBER+ }
+boolean = { "#t" | "#f" }
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+identifier = @{ (ASCII_ALPHA | "_" | "+" | "-" | "&" | "^") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "+" | "-" | "&" | "^")* }
+
+program = { SOI ~ code ~ EOI }
