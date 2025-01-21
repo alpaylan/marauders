@@ -25,6 +25,6 @@ number = @{ DECIMAL_NUMBER+ }
 boolean = { "#t" | "#f" }
 string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
-identifier = @{ (ASCII_ALPHA | "_" | "+" | "-" | "&" | "^") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "+" | "-" | "&" | "^")* }
+identifier = @{ (ASCII_ALPHA | "_" | "+" | "-" | "&" | "^" | "*") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "+" | "-" | "&" | "^")* }
 
 program = { SOI ~ code ~ EOI }

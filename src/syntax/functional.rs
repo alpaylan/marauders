@@ -32,6 +32,7 @@ enum AST {
 #[derive(Debug, Clone, PartialEq)]
 enum Builtin {
     Sum,
+    Minus,
     Mult,
     And,
     Or,
@@ -279,10 +280,7 @@ fn eval(ast: AST, ctx: &mut HashMap<String, Value>) -> anyhow::Result<Value> {
     }
 }
 
-fn eval_builtin(
-    builtin: Builtin,
-    args: Vec<Value>,
-) -> anyhow::Result<Value> {
+fn eval_builtin(builtin: Builtin, args: Vec<Value>) -> anyhow::Result<Value> {
     match builtin {
         Builtin::Sum => {
             let mut sum = 0;
@@ -351,6 +349,25 @@ fn eval_builtin(
                 prev = curr;
             }
             Ok(Value::Boolean(result))
+        }
+        Builtin::Minus => {
+            if args.is_empty() {
+                return Ok(Value::Number(0));
+            }
+            let mut result = if let Value::Number(n) = args[0] {
+                n
+            } else {
+                return Err(anyhow::anyhow!("Expected a number"));
+            };
+
+            for arg in &args[1..] {
+                if let Value::Number(n) = arg {
+                    result -= n;
+                } else {
+                    return Err(anyhow::anyhow!("Expected a number"));
+                }
+            }
+            Ok(Value::Number(result))
         }
     }
 }
@@ -533,5 +550,20 @@ x
         ctx.insert("+".to_string(), Value::Builtin(Builtin::Sum));
         let result = eval(ast, &mut ctx).unwrap();
         assert_eq!(result, Value::Number(30))
+    }
+
+    #[test]
+    fn test_eval_recursion() {
+        let input = r#"
+(define fact (lambda (n) (if (eq n 0) 1 (* n (fact (- n 1))))))
+(fact 5)
+"#;
+        let ast = parse(input).unwrap();
+        let mut ctx = HashMap::new();
+        ctx.insert("eq".to_string(), Value::Builtin(Builtin::Eq));
+        ctx.insert("*".to_string(), Value::Builtin(Builtin::Mult));
+        ctx.insert("-".to_string(), Value::Builtin(Builtin::Minus));
+        let result = eval(ast, &mut ctx).unwrap();
+        assert_eq!(result, Value::Number(120))
     }
 }
