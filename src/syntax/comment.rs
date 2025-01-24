@@ -71,7 +71,7 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     let base = pairs.next().unwrap();
 
     let (base, active, base_indentation) = parse_base(base);
-    
+
     let mut variants = vec![];
 
     for pair in pairs {
@@ -111,7 +111,10 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     // Inline markers for the passive variants
     lines += variants.len() * 2;
 
-    let base = (base, base_indentation.unwrap_or(variation_indentation.clone()));
+    let base = (
+        base,
+        base_indentation.unwrap_or(variation_indentation.clone()),
+    );
 
     (
         Variation {
@@ -126,11 +129,15 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     )
 }
 
-fn parse_variation_header(pair: pest::iterators::Pair<Rule>) -> (Option<String>, Vec<String>, String) {
+fn parse_variation_header(
+    pair: pest::iterators::Pair<Rule>,
+) -> (Option<String>, Vec<String>, String) {
     let mut pairs = pair.into_inner();
 
     let (indentation, begin_marker) = next2(&mut pairs, Rule::indent).unwrap();
-    let indentation = indentation.map(|pair| pair.as_str().to_string()).unwrap_or_default();
+    let indentation = indentation
+        .map(|pair| pair.as_str().to_string())
+        .unwrap_or_default();
     assert_eq!(begin_marker.as_rule(), Rule::variation_begin_marker);
 
     let maybe_name = pairs.peek().unwrap();
@@ -188,7 +195,14 @@ fn parse_variant(pair: pest::iterators::Pair<Rule>) -> (crate::variation::Varian
 
     let (code, is_active, _indent) = parse_variant_body(body);
 
-    (Variant { name, code, indentation: indent }, is_active)
+    (
+        Variant {
+            name,
+            code,
+            indentation: indent,
+        },
+        is_active,
+    )
 }
 
 fn parse_variant_header(pair: pest::iterators::Pair<Rule>) -> (String, String) {
@@ -196,7 +210,9 @@ fn parse_variant_header(pair: pest::iterators::Pair<Rule>) -> (String, String) {
 
     let (indentation, begin_marker) = next2(&mut pairs, Rule::indent).unwrap();
 
-    let indentation = indentation.map(|pair| pair.as_str().to_string()).unwrap_or_default();
+    let indentation = indentation
+        .map(|pair| pair.as_str().to_string())
+        .unwrap_or_default();
 
     assert_eq!(begin_marker.as_rule(), Rule::variant_begin_marker);
 
@@ -238,7 +254,9 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, 
             let mut pairs = body.into_inner();
 
             let (indentation, begin_marker) = next2(&mut pairs, Rule::indent).unwrap();
-            let indentation = indentation.map(|pair| pair.as_str().to_string()).unwrap_or_default();
+            let indentation = indentation
+                .map(|pair| pair.as_str().to_string())
+                .unwrap_or_default();
             assert_eq!(begin_marker.as_rule(), Rule::variant_body_begin_marker);
 
             let body = pairs.next().unwrap();
@@ -257,7 +275,6 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, 
         Rule::active_variant_body => {
             let body = body
                 .into_inner()
-                .into_iter()
                 .map(|pair| pair.as_str().strip_suffix("\n").unwrap().to_string())
                 .collect();
 

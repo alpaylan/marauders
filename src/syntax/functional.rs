@@ -53,7 +53,7 @@ enum Value {
 #[grammar = "syntax/functional.pest"]
 struct LispParser;
 
-fn parse(input: &str) -> Result<AST, pest::error::Error<Rule>> {
+fn parse(input: &str) -> Result<AST, Box<pest::error::Error<Rule>>> {
     let mut pairs = LispParser::parse(Rule::program, input)?;
     let expressions = pairs.next().unwrap().into_inner();
 
@@ -129,7 +129,7 @@ fn parse_expression(pair: pest::iterators::Pair<Rule>) -> AST {
         Rule::mutate => {
             // (mutate "x" ("x_1" (define x 10)) ("x_2" (define x 20)))
             let mut pair = pair.into_inner();
-            let symbol = pair.peek().and_then(|p| Some(parse_string(p)));
+            let symbol = pair.peek().map(|p| parse_string(p));
             if symbol.is_some() {
                 let _ = pair.next();
             }
@@ -330,7 +330,7 @@ fn eval_builtin(builtin: Builtin, args: Vec<Value>) -> anyhow::Result<Value> {
             if let Value::Boolean(b) = args[0] {
                 Ok(Value::Boolean(!b))
             } else {
-                return Err(anyhow::anyhow!("Expected a boolean"));
+                Err(anyhow::anyhow!("Expected a boolean"))
             }
         }
         Builtin::Eq => {

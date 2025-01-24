@@ -91,15 +91,31 @@ impl Language {
     }
 
     pub fn variation_begin(&self, name: &str) -> String {
-        format!(r"{}{} {}{}", self.comment_begin(), self.mutation_marker(), name, self.comment_end())
+        format!(
+            r"{}{} {}{}",
+            self.comment_begin(),
+            self.mutation_marker(),
+            name,
+            self.comment_end()
+        )
     }
 
     pub fn variation_end(&self) -> String {
-        format!("{} {}{}", self.comment_begin(), self.mutation_marker(), self.comment_end())
+        format!(
+            "{} {}{}",
+            self.comment_begin(),
+            self.mutation_marker(),
+            self.comment_end()
+        )
     }
 
     pub fn variant_header_begin(&self) -> String {
-        format!("{}{}{}", self.comment_begin(), self.mutation_marker(), self.mutation_marker())
+        format!(
+            "{}{}{}",
+            self.comment_begin(),
+            self.mutation_marker(),
+            self.mutation_marker()
+        )
     }
 
     pub fn variant_header_end(&self) -> String {
@@ -116,9 +132,7 @@ impl Language {
 
     pub fn mutation_marker(&self) -> &str {
         match self {
-            Language::Coq |
-            Language::Haskell |
-            Language::Racket => "!",
+            Language::Coq | Language::Haskell | Language::Racket => "!",
             Language::Rust => "|",
             Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
         }

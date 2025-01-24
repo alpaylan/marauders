@@ -60,27 +60,3 @@ impl Display for Variation {
         write!(f, "{}", content)
     }
 }
-
-impl Variation {
-    /// Count the lines the variation occupies.
-    pub(crate) fn lines(&self) -> usize {
-        let mut lines = 0;
-
-        // Count the lines of the base code
-        lines += self.base.0.len();
-        // Add the beginning marker
-        lines += 1;
-
-        // Count the lines of each variant
-        for variant in &self.variants {
-            // Add the variant marker
-            lines += 1;
-            // Count the lines of the variant code
-            lines += variant.code.len();
-        }
-        // Add the ending marker
-        lines += 1;
-
-        lines
-    }
-}

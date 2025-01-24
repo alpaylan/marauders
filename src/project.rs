@@ -1,10 +1,8 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
-use anyhow::Context;
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -14,28 +12,28 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub(crate) struct Project {
-    pub(crate) root: PathBuf,
-    pub(crate) files: Vec<ProjectFile>,
+pub struct Project {
+    pub root: PathBuf,
+    pub files: Vec<ProjectFile>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ProjectFile {
-    pub(crate) path: PathBuf,
-    pub(crate) code: Code,
+pub struct ProjectFile {
+    pub path: PathBuf,
+    pub code: Code,
 }
 
 /// Project configuration
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ProjectConfig {
+pub struct ProjectConfig {
     /// List of languages that should be analyzed for mutations
-    pub(crate) languages: Vec<Language>,
+    pub languages: Vec<Language>,
     /// List of glob strings to ignore
-    pub(crate) ignore: Vec<String>,
+    pub ignore: Vec<String>,
     /// Whether to ignore files based on .gitignore
-    pub(crate) use_gitignore: bool,
+    pub use_gitignore: bool,
     /// Custom languages outside of the standart set
-    pub(crate) custom_languages: Vec<CustomLanguage>,
+    pub custom_languages: Vec<CustomLanguage>,
 }
 
 impl Default for ProjectConfig {
@@ -50,7 +48,7 @@ impl Default for ProjectConfig {
 }
 
 impl Project {
-    pub(crate) fn new(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
         let cfg = fs::read_to_string(path.join("marauder.toml")).ok();
 
         if let Some(cfg) = cfg {
@@ -66,7 +64,7 @@ impl Project {
         }
     }
 
-    pub(crate) fn with_pattern(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
+    pub fn with_pattern(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
         let root = PathBuf::from(path);
 
         let mut overrides = OverrideBuilder::new(path);
@@ -101,7 +99,7 @@ impl Project {
         Ok(Project { root, files })
     }
 
-    pub(crate) fn with_config(path: &Path, config: &ProjectConfig) -> anyhow::Result<Self> {
+    pub fn with_config(path: &Path, config: &ProjectConfig) -> anyhow::Result<Self> {
         let root = PathBuf::from(path);
 
         let mut overrides = OverrideBuilder::new(path);
@@ -153,7 +151,7 @@ impl Project {
         Ok(Project { root, files })
     }
 
-    pub(crate) fn with_language(path: &Path, lang: &Language) -> anyhow::Result<Self> {
+    pub fn with_language(path: &Path, lang: &Language) -> anyhow::Result<Self> {
         Self::with_pattern(
             path,
             Some(format!("**/*.{}", lang.file_extension()).as_str()),
@@ -192,11 +190,7 @@ mod tests {
 
         println!("{:?}", file_paths);
         assert!(file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
-        assert!(file_paths.contains(
-            &PathBuf::from("src/syntax/mod.rs")
-                .canonicalize()
-                .unwrap()
-        ));
+        assert!(file_paths.contains(&PathBuf::from("src/syntax/mod.rs").canonicalize().unwrap()));
     }
 
     #[test]

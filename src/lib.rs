@@ -23,21 +23,24 @@
 /// 
 /// The users can invoke mutations by name, or a small DSL that expresses a set of mutations to apply. More details about the mutation
 /// DSL can be found in the documentation of the `algebra` module.
-
-
 /// The library is organized in the following modules:
 /// 
 /// * `algebra`: Contains the DSL for expressing mutations.
 pub mod algebra;
-/// * `cli`: Contains the command line interface for marauders.
-pub mod cli;
 /// * `code`: Contains the way marauders handle the code it analyzes and processes.
 pub mod code;
+pub use code::*;
+/// * `commands`: Contains the logic for the different commands that marauders can execute.
+pub mod commands;
+pub use commands::*;
 /// * `languages`: Contains the language specific details for marauders supported languages.
 pub mod languages;
+pub use languages::*;
 /// * `syntax`: Contains the different syntaxes for expressing mutants.
 pub mod syntax;
 /// * `project`: Contains the logic and structures for handling marauders projects.
 pub mod project;
+pub use project::*;
 /// * `variation`: Contains the logic and structures for about variations.
 pub mod variation;
+pub use variation::*;

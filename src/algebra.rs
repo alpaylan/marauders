@@ -40,8 +40,7 @@ impl Expr {
         // Distributes tags +t into (t1 + t2 + ... + tn) and *t into (t1 * t2 * ... * tn)
         let tagless_expr = self.distribute_tags(&tag_map);
         // Distributes variations v into (v1 + v2 + ... + vn)
-        let variation_distributed =
-            tagless_expr.distribute_variations(&variation_map);
+        let variation_distributed = tagless_expr.distribute_variations(&variation_map);
         // Check that all the variants in the expression are in the variant list
         let mut variants = vec![];
         variation_distributed.collect_variants(&mut variants);
@@ -108,10 +107,7 @@ impl Expr {
         }
     }
 
-    fn distribute_variations(
-        &self,
-        variation_map: &HashMap<String, Vec<String>>,
-    ) -> Expr {
+    fn distribute_variations(&self, variation_map: &HashMap<String, Vec<String>>) -> Expr {
         match self {
             Expr::Sum(lhs, rhs) => {
                 let lhs = lhs.distribute_variations(variation_map);
