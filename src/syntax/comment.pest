@@ -4,8 +4,8 @@ MUTANT_MARKER = _{ "!" | "|" }
 
 code = { (mutation | line)+ ~ last_line? }
 
-line             = { indent? ~ single_line_text ~ NL }
-last_line             = { indent? ~ single_line_text }
+line             = { indent? ~ !variation_end ~ single_line_text ~ NL }
+last_line        = { indent? ~ single_line_text }
 indent           = { (" " | "\t")+ }
 single_line_text = { (!NL ~ !variant_begin_marker ~ ANY)* }
 
