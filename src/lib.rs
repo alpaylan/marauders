@@ -29,6 +29,8 @@
 /// 
 /// * `algebra`: Contains the DSL for expressing mutations.
 pub mod algebra;
+/// * `cli`: Contains the command line interface for marauders.
+pub mod cli;
 /// * `code`: Contains the way marauders handle the code it analyzes and processes.
 pub mod code;
 /// * `languages`: Contains the language specific details for marauders supported languages.

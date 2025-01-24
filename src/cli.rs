@@ -202,7 +202,7 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
+pub fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
     // Check if there's a project config in the path
     let project = Project::new(path, pattern)?;
 
@@ -219,7 +219,7 @@ fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
+pub fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, and do not set it again
     let project = Project::new(path, None)?;
 
@@ -286,7 +286,7 @@ fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
+pub fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     // todo: check currently active variant, if it is not set, do not unset it
     let project = Project::new(path, None)?;
 
@@ -353,7 +353,7 @@ fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_init_command(path: &Path, language: &str, use_gitignore: bool) -> anyhow::Result<()> {
+pub fn run_init_command(path: &Path, language: &str, use_gitignore: bool) -> anyhow::Result<()> {
     let project_config = ProjectConfig {
         languages: Language::name_to_language(language, &vec![]).map_or(vec![], |l| vec![l]),
         custom_languages: vec![],
