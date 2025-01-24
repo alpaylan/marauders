@@ -5,7 +5,10 @@ use std::{
 
 use anyhow::Context;
 
-use crate::{languages::{CustomLanguage, Language}, variation::Variation};
+use crate::{
+    languages::{CustomLanguage, Language},
+    variation::Variation,
+};
 
 #[derive(Debug)]
 pub struct Code {
@@ -24,8 +27,6 @@ impl Code {
     }
 }
 
-type Constant = String;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
     pub(crate) line: usize,
@@ -36,7 +37,7 @@ impl Span {
     pub(crate) fn constant(content: String, line: usize) -> Span {
         Span {
             line,
-            content: SpanContent::Constant(content),
+            content: SpanContent::Line(content),
         }
     }
 
@@ -51,7 +52,7 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpanContent {
     Variation(Variation),
-    Constant(Constant),
+    Line(String),
 }
 
 impl Display for Code {
@@ -59,10 +60,8 @@ impl Display for Code {
         let mut content = String::new();
         for part in &self.spans {
             match &part.content {
-                SpanContent::Constant(c) => content.push_str(c),
+                SpanContent::Line(c) => content.push_str(c),
                 SpanContent::Variation(v) => {
-                    content.push('\n');
-
                     let mut variation_title = String::new();
 
                     if let Some(name) = &v.name {
@@ -73,20 +72,29 @@ impl Display for Code {
                     if !v.tags.is_empty() {
                         variation_title.push_str(format!("[{}] ", v.tags.join(", ")).as_str());
                     }
+                    content.push_str(&v.indentation);
                     content.push_str(&self.language.variation_begin(&variation_title));
                     content.push('\n');
                     if v.active == 0 {
-                        content.push_str(&v.base);
+                        for line in &v.base.0 {
+                            content.push_str(line);
+                            content.push('\n');
+                        }
                     } else {
+                        content.push_str(&v.base.1);
                         content.push_str(&self.language.variant_body_begin());
                         content.push('\n');
-                        content.push_str(&v.base);
-                        content.push('\n');
+                        for line in &v.base.0 {
+                            content.push_str(line);
+                            content.push('\n');
+                        }
+                        content.push_str(&v.base.1);
                         content.push_str(&self.language.variant_body_end());
+                        content.push('\n');
                     }
-                    content.push('\n');
 
                     for (i, variant) in v.variants.iter().enumerate() {
+                        content.push_str(&variant.indentation);
                         content.push_str(&self.language.variant_header_begin());
                         content.push(' ');
                         content.push_str(&variant.name);
@@ -94,16 +102,21 @@ impl Display for Code {
                         content.push_str(&self.language.variant_header_end());
                         content.push('\n');
                         if i + 1 != v.active {
+                            content.push_str(&variant.indentation);
                             content.push_str(&self.language.variant_body_begin());
                             content.push('\n');
                         }
-                        content.push_str(&variant.code);
-                        content.push('\n');
+                        for line in &variant.code {
+                            content.push_str(line);
+                            content.push('\n');
+                        }
                         if i + 1 != v.active {
+                            content.push_str(&variant.indentation);
                             content.push_str(&self.language.variant_body_end());
                             content.push('\n');
                         }
                     }
+                    content.push_str(&v.indentation);
                     content.push_str(&self.language.variation_end());
                     content.push('\n');
                 }
@@ -114,7 +127,10 @@ impl Display for Code {
 }
 
 impl Code {
-    pub(crate) fn from_file(filepath: &Path, custom_languages: &Vec<CustomLanguage>) -> anyhow::Result<Code> {
+    pub(crate) fn from_file(
+        filepath: &Path,
+        custom_languages: &Vec<CustomLanguage>,
+    ) -> anyhow::Result<Code> {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
         let extension = filepath.extension().context(format!(

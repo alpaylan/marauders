@@ -18,26 +18,26 @@ Fixpoint insert (k : nat) (v: nat) (t : Tree) :=
   match t with
   | E => T E k v E
   | T l k' v' r =>
-(*! insert [new, easy] *)
-if k <? k' then T (insert k v l) k' v' r 
+    (*! insert [new, easy] *)
+    if k <? k' then T (insert k v l) k' v' r 
     else if k' <? k then T l k' v' (insert k v r) 
     else T l k' v r
-(*!! insert_1 *)
-(*!
-T E k v E
-*)
-(*!! insert_2 *)
-(*!
-if k <? k' then T (insert k v l) k' v' r
-    else T l k' v r
-*)
-(*!! insert_3 *)
-(*!
-if k <? k' then T (insert k v l) k' v' r
-    else if k' <? k then T l k' v' (insert k v r)
-    else T l k' v' r
-*)
-(* !*)
+    (*!! insert_1 *)
+    (*!
+    T E k v E
+    *)
+    (*!! insert_2 *)
+    (*!
+    if k <? k' then T (insert k v l) k' v' r
+        else T l k' v r
+    *)
+    (*!! insert_3 *)
+    (*!
+    if k <? k' then T (insert k v l) k' v' r
+        else if k' <? k then T l k' v' (insert k v r)
+        else T l k' v' r
+    *)
+    (* !*)
 end.
 
 Fixpoint join (l: Tree) (r: Tree) :=

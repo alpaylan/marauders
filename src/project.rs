@@ -175,9 +175,9 @@ mod tests {
             .iter()
             .map(|f| f.path.clone())
             .collect::<Vec<_>>();
-        assert!(file_paths.contains(&PathBuf::from("test/BST.v")));
-        assert!(file_paths.contains(&PathBuf::from("test/RBT.v")));
-        assert!(file_paths.contains(&PathBuf::from("test/STLC.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/coq/BST.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/coq/RBT.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/coq/STLC.v")));
     }
 
     #[test]
@@ -190,9 +190,10 @@ mod tests {
             .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
 
-        assert!(file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        println!("{:?}", file_paths);
+        assert!(file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
         assert!(file_paths.contains(
-            &PathBuf::from("src/syntax/comment.rs")
+            &PathBuf::from("src/syntax/mod.rs")
                 .canonicalize()
                 .unwrap()
         ));
@@ -207,8 +208,8 @@ mod tests {
             .iter()
             .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
-        assert!(file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
-        assert!(file_paths.contains(&PathBuf::from("test/STLC.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/coq/STLC.v").canonicalize().unwrap()));
     }
 
     #[test]
@@ -233,7 +234,7 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
     }
 
     #[test]
@@ -258,7 +259,7 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
         // todo: make this work in the CI
         // assert!(!file_paths.contains(
         //     &PathBuf::from("target/package/marauder-0.0.1/src/cli.rs")
@@ -294,6 +295,6 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/coq/BST.v").canonicalize().unwrap()));
     }
 }

@@ -10,8 +10,10 @@ use std::fmt::Display;
 pub struct Variant {
     /// name of the variant
     pub name: String,
-    /// code of the variant
-    pub code: String,
+    /// code of the variant(as lines)
+    pub code: Vec<String>,
+    /// indentation of the variant
+    pub indentation: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,11 +23,13 @@ pub struct Variation {
     /// tags of the variation
     pub tags: Vec<String>,
     /// base code
-    pub base: String,
+    pub base: (Vec<String>, String),
     /// list of variants
     pub variants: Vec<Variant>,
     /// index of the active variant
     pub active: usize,
+    /// indentation of the variation
+    pub indentation: String,
 }
 
 impl Display for Variation {
@@ -63,7 +67,7 @@ impl Variation {
         let mut lines = 0;
 
         // Count the lines of the base code
-        lines += self.base.lines().count();
+        lines += self.base.0.len();
         // Add the beginning marker
         lines += 1;
 
@@ -72,7 +76,7 @@ impl Variation {
             // Add the variant marker
             lines += 1;
             // Count the lines of the variant code
-            lines += variant.code.lines().count();
+            lines += variant.code.len();
         }
         // Add the ending marker
         lines += 1;

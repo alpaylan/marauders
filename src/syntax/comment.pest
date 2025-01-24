@@ -1,62 +1,49 @@
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+NL = _{ "\n" | "\r" }
 
 MUTANT_MARKER = _{ "!" | "|" }
 
-// Code ::= (Text | Mutation)+
-code = { (mutation | text)+ }
+code = { (mutation | line)+ ~ last_line? }
 
-// Mutation ::= Inline | Variable | Variation
-mutation = { variation | inline | variable }
+line             = { indent? ~ single_line_text ~ NL }
+last_line             = { indent? ~ single_line_text }
+indent           = { (" " | "\t")+ }
+single_line_text = { (!NL ~ !variant_begin_marker ~ ANY)* }
 
-// Inline ::= COMMENT_BEGIN Tags? “!”  Text COMMENT_END
-inline = { comment_begin ~ MUTANT_MARKER ~ comment_text ~ comment_end }
+mutation = { variation }
 
-// Variation ::= Base Variant+ End
-variation = { variation_header ~ base ~ variant+ ~ end }
+variation = { variation_header ~ NL ~ base ~ variant+ ~ variation_end ~ NL? }
 
-// Base ::= COMMENT_BEGIN Tags? “!” Identifier? COMMENT_END Text
+variation_header       =  { indent? ~ variation_begin_marker ~ WHITE_SPACE ~ (identifier ~ WHITE_SPACE)? ~ (tags ~ WHITE_SPACE)? ~ comment_end }
 variation_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
-variation_header       =  { variation_begin_marker ~ identifier? ~ tags? ~ comment_end }
+variation_end          = @{ indent? ~ comment_begin ~ WHITE_SPACE ~ MUTANT_MARKER ~ comment_end }
 
 base = { variant_body }
-// End ::= COMMENT_BEGIN “?” COMMENT_END
-end = @{ comment_begin ~ WHITE_SPACE ~ MUTANT_MARKER ~ comment_end }
 
-// Variant ::= VariantHeader VariantBody
-variant = { variant_header ~ variant_body }
+variant = { variant_header ~ NL ~ variant_body }
 
-// VariantHeader ::= COMMENT_BEGIN Tags? “!!” Identifier COMMENT_END
 variant_begin_marker = @{ comment_begin ~ MUTANT_MARKER{2} }
-variant_header       =  { variant_begin_marker ~ identifier ~ comment_end }
+variant_header       =  { indent? ~ variant_begin_marker ~ WHITE_SPACE ~ identifier ~ WHITE_SPACE ~ comment_end }
 
-// VariantBody ::= COMMENT_BEGIN “!” Text COMMENT_END
+variant_body = { inactive_variant_body | active_variant_body }
+
+inactive_variant_body     =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ comment_end ~ NL }
 variant_body_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
 
-variant_body          = { inactive_variant_body | active_variant_body }
-inactive_variant_body = { variant_body_begin_marker ~ comment_text ~ comment_end }
-active_variant_body   = { text }
+active_variant_body = { line+ }
 
 // Tags ::= “[“ (Tag “,”)* Tag “]”
-tags = { "[" ~ tag ~ ("," ~ tag)* ~ "]" }
+tags = { "[" ~ WHITE_SPACE? ~ tag ~ (WHITE_SPACE? ~ "," ~ WHITE_SPACE? ~ tag)* ~ WHITE_SPACE? ~ "]" }
 
 // Tag ::= Identifier
 tag = { identifier }
 
-// Variable ::= Default Variant+ End
-variable = { default ~ variant+ ~ end }
-
-// Default ::= DefaultHeader DefaultBody
-default = { default_header ~ default_body }
-
-// DefaultHeader ::= COMMENT_BEGIN Tags? “$” Mode? Identifier? COMMENT_END
-default_header = { comment_begin ~ "$" ~ identifier ~ comment_end }
-
-// DefaultBody ::= COMMENT_BEGIN “!” Text COMMENT_END
-default_body = { comment_begin ~ MUTANT_MARKER ~ text ~ comment_end }
-
 comment_begin = { "(*" | "/*" | "-{" | "#|" }
 comment_end   = { "*)" | "*/" | "}-" | "|#" }
 
-identifier   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
-text         =  { (!(variant_body_begin_marker | end) ~ ANY)+ }
-comment_text =  { (!comment_end ~ ANY)+ }
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+
+comment_text             = { comment_line+ }
+comment_line             = { indent? ~ single_line_comment_text ~ NL }
+single_line_comment_text = { (!NL ~ !comment_end ~ ANY)* }
+
+program = { SOI ~ code ~ EOI }
