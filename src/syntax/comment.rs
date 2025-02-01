@@ -4,6 +4,7 @@ use pest_derive::Parser;
 
 use crate::code::{Span, SpanContent};
 use crate::variation::{Variant, Variation};
+use crate::VariantBody;
 
 #[derive(Parser)]
 #[grammar = "syntax/comment.pest"]
@@ -70,7 +71,7 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     let (name, tags, variation_indentation) = parse_variation_header(header);
     let base = pairs.next().unwrap();
 
-    let (base, active, base_indentation) = parse_base(base);
+    let base = parse_base(base);
 
     let mut variants = vec![];
 
@@ -85,43 +86,38 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     }
 
     // only one of the variants or the base can be active
-    let actives = variants.iter().filter(|(_, active)| *active).count();
-    let active = if active {
+    let actives = variants.iter().filter(|v| v.is_active()).count();
+    let active = if let VariantBody::Active { .. } = base {
         assert_eq!(actives, 0);
         0
     } else {
         assert_eq!(actives, 1);
-        variants.iter().position(|(_, active)| *active).unwrap() + 1
+        variants.iter().position(|v| v.is_active()).unwrap() + 1
     };
 
     let mut lines = 0;
     // Begin marker (*! *)
     lines += 1;
     // Base code
-    lines += base.len();
+    lines += base.count_lines();
     // Variant codes
-    for (variant, _) in &variants {
+    for variant in &variants {
         // Begin marker (*!! *)
         lines += 1;
         // Variant code
-        lines += variant.code.len();
+        lines += variant.body.count_lines();
     }
     // End marker (* !*)
     lines += 1;
     // Inline markers for the passive variants
     lines += variants.len() * 2;
 
-    let base = (
-        base,
-        base_indentation.unwrap_or(variation_indentation.clone()),
-    );
-
     (
         Variation {
             name,
             tags,
-            base,
-            variants: variants.into_iter().map(|(v, _)| v).collect(),
+            base: Variant { name: "base".to_string(), body: base },
+            variants,
             active,
             indentation: variation_indentation,
         },
@@ -176,33 +172,30 @@ fn parse_variation_header(
     (name, tags, indentation)
 }
 
-fn parse_base(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, Option<String>) {
+fn parse_base(pair: pest::iterators::Pair<Rule>) -> VariantBody {
     let mut pairs = pair.into_inner();
     let body = pairs.next().unwrap();
     parse_variant_body(body)
 }
 
-fn get_indent(ws: &str) -> String {
-    ws.chars().filter(|c| *c == ' ' || *c == '\t').collect()
-}
-
-fn parse_variant(pair: pest::iterators::Pair<Rule>) -> (crate::variation::Variant, bool) {
+fn parse_variant(pair: pest::iterators::Pair<Rule>) -> Variant {
     let mut pairs = pair.into_inner();
     let header = pairs.next().unwrap();
     let (name, indent) = parse_variant_header(header);
 
     let body = pairs.next().unwrap();
 
-    let (code, is_active, _indent) = parse_variant_body(body);
+    let mut body = parse_variant_body(body);
 
-    (
-        Variant {
-            name,
-            code,
-            indentation: indent,
-        },
-        is_active,
-    )
+    match &mut body {
+        VariantBody::InactiveMultiLine { indentation, .. }
+        | VariantBody::InactiveSingleLine { indentation, .. } => {
+            *indentation = indent.clone();
+        }
+        VariantBody::Active { .. } => {}
+    };
+
+    Variant { name, body }
 }
 
 fn parse_variant_header(pair: pest::iterators::Pair<Rule>) -> (String, String) {
@@ -245,12 +238,12 @@ fn next2<'a>(
     }
 }
 
-fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, Option<String>) {
+fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> VariantBody {
     let mut body = pair.into_inner();
     let body = body.next().unwrap();
 
     match body.as_rule() {
-        Rule::inactive_variant_body => {
+        Rule::inactive_multi_line_variant_body => {
             let mut pairs = body.into_inner();
 
             let (indentation, begin_marker) = next2(&mut pairs, Rule::indent).unwrap();
@@ -270,7 +263,35 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, 
             let (_, end_marker) = next2(&mut pairs, Rule::indent).unwrap();
             assert_eq!(end_marker.as_rule(), Rule::comment_end);
 
-            (body, false, Some(indentation))
+            log::debug!("inactive multi-line variant body: {:?}", body);
+            log::debug!("inactive multi-line variant indentation: {:?}", indentation);
+
+            VariantBody::InactiveMultiLine {
+                lines: body,
+                indentation,
+            }
+        }
+        Rule::inactive_single_line_variant_body => {
+            let mut pairs = body.into_inner();
+
+            let (indentation, begin_marker) = next2(&mut pairs, Rule::indent).unwrap();
+            let indentation = indentation
+                .map(|pair| pair.as_str().to_string())
+                .unwrap_or_default();
+            assert_eq!(begin_marker.as_rule(), Rule::variant_body_begin_marker);
+
+            let body = pairs.next().unwrap();
+            assert_eq!(body.as_rule(), Rule::single_line_comment_text);
+
+            let body = body.as_str().trim().to_string();
+
+            let end_marker = pairs.next().unwrap();
+            assert_eq!(end_marker.as_rule(), Rule::comment_end);
+
+            VariantBody::InactiveSingleLine {
+                line: body,
+                indentation,
+            }
         }
         Rule::active_variant_body => {
             let body = body
@@ -278,7 +299,7 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, 
                 .map(|pair| pair.as_str().strip_suffix("\n").unwrap().to_string())
                 .collect();
 
-            (body, true, None)
+            VariantBody::Active { lines: body }
         }
         p => unreachable!("unexpected rule {:?}", p),
     }
@@ -286,7 +307,7 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> (Vec<String>, bool, 
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, result};
+    use std::{fs, path::PathBuf};
 
     use crate::code::{Code, SpanContent};
 
@@ -364,7 +385,7 @@ else join l r
         let result = parse_base(result);
 
         assert_eq!(
-            result.0,
+            result.lines(),
             vec![
                 "",
                 "if k <? k' then T (delete k l) k' v' r",
@@ -373,7 +394,7 @@ else join l r
             ]
         );
 
-        assert_eq!(result.1, true);
+        assert!(matches!(result, VariantBody::Active { .. }));
     }
 
     #[test]
@@ -424,16 +445,18 @@ else join l r
         let result = result.next().unwrap();
 
         let result = parse_variant_body(result);
-        assert_eq!(
-            result.0,
-            vec![
-                "if k <? k' then delete k l",
-                "else if k' <? k then delete k r",
-                "else join l r"
-            ]
-        );
-
-        assert_eq!(result.1, false);
+        if let VariantBody::InactiveMultiLine { lines, .. } = result {
+            assert_eq!(
+                lines,
+                vec![
+                    "if k <? k' then delete k l",
+                    "else if k' <? k then delete k r",
+                    "else join l r",
+                ]
+            );
+        } else {
+            panic!("unexpected variant body {:?}", result);
+        }
     }
 
     #[test]
@@ -454,16 +477,16 @@ else join l r
 
         let result = parse_variant(result);
 
-        assert_eq!(result.0.name, "delete_4");
+        assert_eq!(result.name, "delete_4");
         assert_eq!(
-            result.0.code,
+            result.lines(),
             vec![
                 "if k <? k' then delete k l",
                 "else if k' <? k then delete k r",
                 "else join l r",
             ]
         );
-        assert_eq!(result.1, false);
+        assert!(matches!(result.body, VariantBody::InactiveMultiLine { .. }));
     }
 
     #[test]
@@ -495,7 +518,7 @@ else join l r
         let (variation, line) = parse_variation(result);
 
         assert_eq!(
-            variation.base.0,
+            variation.base.lines(),
             vec![
                 "  if k <? k' then T (delete k l) k' v' r",
                 "  else if k' <? k then T l k' v' (delete k r)",
@@ -512,7 +535,7 @@ else join l r
 
         assert_eq!(delete_4.name, "delete_4");
         assert_eq!(
-            delete_4.code,
+            delete_4.lines(),
             vec![
                 "  if k <? k' then delete k l",
                 "  else if k' <? k then delete k r",
@@ -522,7 +545,7 @@ else join l r
 
         assert_eq!(delete_5.name, "delete_5");
         assert_eq!(
-            delete_5.code,
+            delete_5.lines(),
             vec![
                 "  if k' <? k then T (delete k l) k' v' r",
                 "  else if k <? k' then T l k' v' (delete k r)",
@@ -613,7 +636,7 @@ else join l r
             assert_eq!(v.tags, vec![] as Vec<String>);
             assert_eq!(v.active, 0);
             assert_eq!(
-                v.base.0,
+                v.base.lines(),
                 vec![
                     "  if k <? k' then T (delete k l) k' v' r",
                     "  else if k' <? k then T l k' v' (delete k r)",
@@ -623,7 +646,7 @@ else join l r
             assert_eq!(v.variants.len(), 2);
             assert_eq!(v.variants[0].name, "delete_4");
             assert_eq!(
-                v.variants[0].code,
+                v.variants[0].lines(),
                 vec![
                     "  if k <? k' then delete k l",
                     "  else if k' <? k then delete k r",
@@ -632,7 +655,7 @@ else join l r
             );
             assert_eq!(v.variants[1].name, "delete_5");
             assert_eq!(
-                v.variants[1].code,
+                v.variants[1].lines(),
                 vec![
                     "  if k' <? k then T (delete k l) k' v' r",
                     "  else if k <? k' then T l k' v' (delete k r)",
@@ -708,7 +731,7 @@ end."#,
             assert_eq!(v.tags, vec![] as Vec<String>);
             assert_eq!(v.active, 0);
             assert_eq!(
-                v.base.0,
+                v.base.lines(),
                 vec![
                     "        if k <? k' then T (delete k l) k' v' r",
                     "        else if k' <? k then T l k' v' (delete k r)",
@@ -718,7 +741,7 @@ end."#,
             assert_eq!(v.variants.len(), 2);
             assert_eq!(v.variants[0].name, "delete_4");
             assert_eq!(
-                v.variants[0].code,
+                v.variants[0].lines(),
                 vec![
                     "        if k <? k' then delete k l",
                     "        else if k' <? k then delete k r",
@@ -727,13 +750,46 @@ end."#,
             );
             assert_eq!(v.variants[1].name, "delete_5");
             assert_eq!(
-                v.variants[1].code,
+                v.variants[1].lines(),
                 vec![
                     "        if k' <? k then T (delete k l) k' v' r",
                     "        else if k <? k' then T l k' v' (delete k r)",
                     "        else join l r",
                 ]
             );
+        } else {
+            panic!("unexpected span content {:?}", result[1].content);
+        }
+    }
+
+    #[test]
+    fn test_single_line_variant() {
+        let result = parse_code(
+            r#"
+(define fact
+  (lambda (n)
+    (if (eq n 0)
+        #|! fact |#
+        1
+        #|!! fact_1 |#
+        #|! 2 |#
+        #| !|#
+        (* n (fact (- n 1))))))
+(fact 5)
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(result.len(), 3);
+
+        if let SpanContent::Variation(v) = &result[1].content {
+            assert_eq!(v.name, Some("fact".to_string()));
+            assert_eq!(v.tags, vec![] as Vec<String>);
+            assert_eq!(v.active, 0);
+            assert_eq!(v.base.lines(), vec!["        1",]);
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "fact_1");
+            assert_eq!(v.variants[0].lines(), vec!["2"]);
         } else {
             panic!("unexpected span content {:?}", result[1].content);
         }

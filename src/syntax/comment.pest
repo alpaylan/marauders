@@ -24,9 +24,10 @@ variant = { variant_header ~ NL ~ variant_body }
 variant_begin_marker = @{ comment_begin ~ MUTANT_MARKER{2} }
 variant_header       =  { indent? ~ variant_begin_marker ~ WHITE_SPACE ~ identifier ~ WHITE_SPACE ~ comment_end }
 
-variant_body = { inactive_variant_body | active_variant_body }
+variant_body = { inactive_multi_line_variant_body | inactive_single_line_variant_body | active_variant_body }
 
-inactive_variant_body     =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ comment_end ~ NL }
+inactive_single_line_variant_body     =  { indent? ~ variant_body_begin_marker ~ single_line_comment_text ~ comment_end ~ NL }
+inactive_multi_line_variant_body     =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ comment_end ~ NL }
 variant_body_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
 
 active_variant_body = { line+ }

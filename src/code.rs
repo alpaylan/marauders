@@ -7,7 +7,7 @@ use anyhow::Context;
 
 use crate::{
     languages::{CustomLanguage, Language},
-    variation::Variation,
+    variation::Variation, Variant,
 };
 
 #[derive(Debug)]
@@ -76,42 +76,46 @@ impl Display for Code {
                     content.push_str(&self.language.variation_begin(&variation_title));
                     content.push('\n');
                     if v.active == 0 {
-                        for line in &v.base.0 {
+                        for line in &v.base.lines() {
                             content.push_str(line);
                             content.push('\n');
                         }
                     } else {
-                        content.push_str(&v.base.1);
+                        println!("base_indentation: {:?}", v.base.indentation());
+                        println!("indentation: {:?}", v.indentation);
+                        let indentation = v.base.indentation().unwrap_or(v.indentation.clone());
+                        content.push_str(&indentation);
                         content.push_str(&self.language.variant_body_begin());
                         content.push('\n');
-                        for line in &v.base.0 {
+                        for line in &v.base.lines() {
                             content.push_str(line);
                             content.push('\n');
                         }
-                        content.push_str(&v.base.1);
+                        content.push_str(&indentation);
                         content.push_str(&self.language.variant_body_end());
                         content.push('\n');
                     }
 
                     for (i, variant) in v.variants.iter().enumerate() {
-                        content.push_str(&variant.indentation);
+                        let indentation = variant.indentation().unwrap_or(v.indentation.clone());
+                        content.push_str(&v.indentation);
                         content.push_str(&self.language.variant_header_begin());
                         content.push(' ');
                         content.push_str(&variant.name);
                         content.push(' ');
                         content.push_str(&self.language.variant_header_end());
                         content.push('\n');
-                        if i + 1 != v.active {
-                            content.push_str(&variant.indentation);
+                        if !matches!(variant.body, crate::variation::VariantBody::Active { .. }) {
+                            content.push_str(&v.indentation);
                             content.push_str(&self.language.variant_body_begin());
                             content.push('\n');
                         }
-                        for line in &variant.code {
+                        for line in &variant.lines() {
                             content.push_str(line);
                             content.push('\n');
                         }
-                        if i + 1 != v.active {
-                            content.push_str(&variant.indentation);
+                        if !matches!(variant.body, crate::variation::VariantBody::Active { .. }) {
+                            content.push_str(&v.indentation);
                             content.push_str(&self.language.variant_body_end());
                             content.push('\n');
                         }
@@ -215,7 +219,27 @@ impl Code {
         );
         match self.spans[variation_index].content {
             SpanContent::Variation(ref mut v) => {
-                v.active = variant_index;
+                println!(
+                    "setting active variant '{}' for variation '{}'",
+                    variant_index, variation_index
+                );
+                log::debug!("variants: {:?}", v.variants);
+
+                let variant = if variant_index == 0 {
+                    &mut v.base
+                } else {
+                    &mut v
+                        .variants
+                        .get_mut(variant_index - 1)
+                        .context("invalid variant index")?
+                };
+
+                if variant.is_active() {
+                    anyhow::bail!("variant is already active");
+                } else {
+                    // deactivate the currently active variant
+                    v.activate_variant(variant_index);
+                }
             }
             _ => anyhow::bail!("invalid variation index"),
         }
