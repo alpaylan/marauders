@@ -30,11 +30,15 @@ impl Variant {
     pub(crate) fn activate(&mut self) {
         match &mut self.body {
             VariantBody::InactiveMultiLine { lines, .. } => {
-                self.body = VariantBody::Active { lines: lines.clone() };
+                self.body = VariantBody::Active {
+                    lines: lines.clone(),
+                };
             }
             VariantBody::InactiveSingleLine { line, indentation } => {
                 let line = format!("{}{}", indentation, line);
-                self.body = VariantBody::Active { lines: vec![line.clone()] };
+                self.body = VariantBody::Active {
+                    lines: vec![line.clone()],
+                };
             }
             VariantBody::Active { .. } => {}
         }

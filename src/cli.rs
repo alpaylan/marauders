@@ -5,8 +5,8 @@ use std::{
 
 use clap::Parser;
 use marauders::{
-    run_init_command, run_list_command, run_reset_command, run_set_command, run_unset_command,
-    CustomLanguage, Language, ProjectConfig,
+    algebra, run_init_command, run_list_command, run_reset_command, run_set_command,
+    run_unset_command, CustomLanguage, Language, ProjectConfig,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -27,33 +27,33 @@ pub(crate) struct Opts {
 pub(crate) enum Command {
     #[clap(name = "list", about = "List variations in the code")]
     List {
-        #[clap(short, long)]
+        #[clap(short, long, default_value = ".")]
         path: PathBuf,
         #[clap(long)]
         pattern: Option<String>,
     },
     #[clap(name = "set", about = "Set active variant")]
     Set {
-        #[clap(short, long)]
+        #[clap(short, long, default_value = ".")]
         path: PathBuf,
         #[clap(short, long)]
         variant: String,
     },
     #[clap(name = "unset", about = "Unset active variant")]
     Unset {
-        #[clap(short, long)]
+        #[clap(short, long, default_value = ".")]
         path: PathBuf,
         #[clap(short, long)]
         variant: String,
     },
     #[clap(name = "reset", about = "Reset all variationts to base")]
     Reset {
-        #[clap(short, long)]
+        #[clap(short, long, default_value = ".")]
         path: PathBuf,
     },
     #[clap(name = "init", about = "Initialize a project")]
     Init {
-        #[clap(short, long)]
+        #[clap(short, long, default_value = ".")]
         path: PathBuf,
         #[clap(short, long)]
         language: String,
@@ -62,6 +62,21 @@ pub(crate) enum Command {
     },
     #[clap(subcommand, about = "Configure project")]
     Config(ConfigCommand),
+    #[clap(name = "test", about = "Use marauders to run a series of tests")]
+    Run {
+        #[clap(short, long)]
+        /// The mutation expression for running tests
+        expr: String,
+        #[clap(short, long, default_value = ".")]
+        path: PathBuf,
+        #[clap(short, long)]
+        /// The test command to run
+        /// The command should be a shell command that runs the tests
+        command: String,
+        #[clap(short, long, default_value = "false")]
+        /// Whether to print the output or not
+        nocapture: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -186,9 +201,62 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
             log::info!("configuring project");
             run_config_command(config_command)?;
         }
+        Command::Run {
+            expr,
+            path,
+            command,
+            nocapture,
+        } => {
+            log::info!("running tests at '{}'", path.to_string_lossy());
+            run_run_command(expr, path, command, *nocapture)?;
+        }
     }
 
     Ok(())
+}
+
+fn run_run_command(expr: &str, path: &Path, command: &str, nocapture: bool) -> anyhow::Result<()> {
+    let path = path.to_path_buf();
+
+    let mut project = marauders::Project::new(&path, None)?;
+
+    let active_variants = project.active_variants();
+
+    anyhow::ensure!(
+        active_variants.is_empty(),
+        r#"test command is only available when there are no active variants in the project, if you would like run the test command, please first run `marauders reset`."#
+    );
+
+    let tag_map = project.tag_map();
+    let variation_map = project.variation_map();
+    let variant_list = project.all_variants();
+
+    let tests = algebra::compute_mutations(&expr, &tag_map, &variation_map, &variant_list)?;
+
+    for test in tests {
+        project.set_many(&test)?;
+        let result = project.run(command);
+        match result {
+            Ok(output) => {
+                if nocapture {
+                    print!("{}", String::from_utf8_lossy(&output.stdout));
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+
+                if output.status.success() {
+                    println!("Test passed: {:?}", test);
+                } else {
+                    println!("Test failed: {:?}", test);
+                }
+            }
+            Err(e) => {
+                println!("Test failed: {:?}", test);
+                println!("Error: {:?}", e);
+            }
+        }
+    }
+
+    project.reset()
 }
 
 fn run_config_command(config_command: &ConfigCommand) -> anyhow::Result<()> {

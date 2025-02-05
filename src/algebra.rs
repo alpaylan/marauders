@@ -3,6 +3,17 @@ use std::{collections::HashMap, fmt::Display, iter::Peekable, str::Chars};
 type Id = String;
 type Tag = String;
 
+pub fn compute_mutations(
+    expr: &str,
+    tag_map: &HashMap<String, Vec<String>>,
+    variation_map: &HashMap<String, Vec<String>>,
+    variant_list: &Vec<String>,
+) -> anyhow::Result<Vec<Vec<String>>> {
+    let mut parser = Parser::new(expr);
+    let expr = parser.parse();
+    expr.into_sum_of_products(tag_map, variation_map, variant_list)
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum Expr {
     Sum(Box<Expr>, Box<Expr>),
@@ -31,16 +42,16 @@ impl Expr {
     /// @variation_map: A map from variation ids to a list of ids that are variants within the variation
     /// @variant_list: A complete list of all variant ids
     /// @return: A list of lists of ids that represent the sum of products
-    pub(crate) fn into_sum_of_products(
+    fn into_sum_of_products(
         &self,
-        tag_map: HashMap<String, Vec<String>>,
-        variation_map: HashMap<String, Vec<String>>,
-        variant_list: Vec<String>,
+        tag_map: &HashMap<String, Vec<String>>,
+        variation_map: &HashMap<String, Vec<String>>,
+        variant_list: &Vec<String>,
     ) -> anyhow::Result<Vec<Vec<String>>> {
         // Distributes tags +t into (t1 + t2 + ... + tn) and *t into (t1 * t2 * ... * tn)
-        let tagless_expr = self.distribute_tags(&tag_map);
+        let tagless_expr = self.distribute_tags(tag_map);
         // Distributes variations v into (v1 + v2 + ... + vn)
-        let variation_distributed = tagless_expr.distribute_variations(&variation_map);
+        let variation_distributed = tagless_expr.distribute_variations(variation_map);
         // Check that all the variants in the expression are in the variant list
         let mut variants = vec![];
         variation_distributed.collect_variants(&mut variants);
@@ -434,7 +445,7 @@ mod tests {
             "delete_2".to_string(),
         ];
         let sum_of_products = expr
-            .into_sum_of_products(tag_map, variation_map, variant_list)
+            .into_sum_of_products(&tag_map, &variation_map, &variant_list)
             .unwrap();
         assert_eq!(
             sum_of_products,

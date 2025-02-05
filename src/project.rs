@@ -1,14 +1,18 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Output,
 };
 
+use anyhow::Context;
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     code::Code,
     languages::{CustomLanguage, Language},
+    SpanContent,
 };
 
 #[derive(Debug)]
@@ -156,6 +160,179 @@ impl Project {
             path,
             Some(format!("**/*.{}", lang.file_extension()).as_str()),
         )
+    }
+}
+
+impl Project {
+    /// Returns the list of active variants in the project
+    pub fn active_variants(&self) -> Vec<&str> {
+        let mut variants = Vec::new();
+        for file in &self.files {
+            for span in &file.code.spans {
+                if let SpanContent::Variation(v) = &span.content {
+                    if v.active != 0 {
+                        variants.push(v.variants[v.active - 1].name.as_str());
+                    }
+                }
+            }
+        }
+        variants
+    }
+
+    /// Returns a hashmap of tag names, to a list of variations that have that tag
+    pub fn tag_map(&self) -> HashMap<String, Vec<String>> {
+        let mut tag_map = HashMap::new();
+        for file in &self.files {
+            for span in &file.code.spans {
+                if let SpanContent::Variation(v) = &span.content {
+                    if let Some(name) = &v.name {
+                        for tag in &v.tags {
+                            let tag = tag.to_string();
+                            let variations = tag_map.entry(tag).or_insert(vec![]);
+                            variations.push(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        tag_map
+    }
+
+    /// Returns a hashmap of variation names, to the list of variants in that variation
+    pub fn variation_map(&self) -> HashMap<String, Vec<String>> {
+        let mut variation_map = HashMap::new();
+        for file in &self.files {
+            for span in &file.code.spans {
+                if let SpanContent::Variation(v) = &span.content {
+                    // Only add variations with a name
+                    if let Some(name) = &v.name {
+                        let variants = variation_map.entry(name.clone()).or_insert(vec![]);
+                        for variant in &v.variants {
+                            variants.push(variant.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        variation_map
+    }
+
+    /// Returns a list of all variants in the project
+    pub fn all_variants(&self) -> Vec<String> {
+        let mut variants = vec![];
+        for file in &self.files {
+            for span in &file.code.spans {
+                if let SpanContent::Variation(v) = &span.content {
+                    for variant in &v.variants {
+                        variants.push(variant.name.clone());
+                    }
+                }
+            }
+        }
+        variants
+    }
+
+    /// Sets the active variant
+    pub fn set(&mut self, variant: &str) -> anyhow::Result<()> {
+        let mut found = false;
+        let mut variants = vec![];
+        for file in self.files.iter_mut() {
+            let code = &mut file.code;
+            if let Some((variation_index, variation)) =
+                code.spans
+                    .iter()
+                    .enumerate()
+                    .find(|(_, v)| match &v.content {
+                        SpanContent::Variation(v) => v.variants.iter().any(|v| v.name == variant),
+                        _ => false,
+                    })
+            {
+                found = true;
+                let variation = match &variation.content {
+                    SpanContent::Variation(v) => v,
+                    _ => unreachable!(),
+                };
+
+                let (variant_index, _) = variation
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .find(|(_, v)| v.name == variant)
+                    .ok_or_else(|| anyhow::anyhow!("variant not found"))?;
+
+                // Shift index by because 0 is reserved for the base code
+                let variant_index = variant_index + 1;
+
+                log::info!(
+                    "variant index is '{}' at '({}, {})'",
+                    variant_index,
+                    variation.name.as_deref().unwrap_or("anonymous"),
+                    variation_index,
+                );
+
+                code.set_active_variant(variation_index, variant_index)?;
+
+                log::info!("active variant set to '{}'", variant);
+                println!("active variant set to '{}'", variant);
+            } else {
+                variants.extend(
+                    code.get_all_variants()
+                        .into_iter()
+                        .map(|v| (file.path.clone(), v)),
+                );
+            }
+        }
+
+        if !found {
+            log::error!(
+                "variant '{variant}' not found, possible variants are (\n{}\n)",
+                variants
+                    .iter()
+                    .map(|(path, v): &(PathBuf, String)| format!(
+                        "\t'{}' at '{}'",
+                        v,
+                        path.to_string_lossy()
+                    ))
+                    .collect::<Vec<String>>()
+                    .join(",\n")
+            )
+        }
+
+        Ok(())
+    }
+
+    /// Sets the active variants for a test
+    pub fn set_many(&mut self, test: &Vec<String>) -> anyhow::Result<()> {
+        for variant in test {
+            self.set(variant)?;
+        }
+        Ok(())
+    }
+
+    /// Runs a command at the project root
+    pub fn run(&self, command: &str) -> anyhow::Result<Output> {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&self.root)
+            .output()
+            .context("failed to run command")
+    }
+
+    /// Resets a project to the base
+    pub fn reset(&mut self) -> anyhow::Result<()> {
+        for file in self.files.iter_mut() {
+            file.code.spans.iter_mut().for_each(|span| {
+                if let SpanContent::Variation(v) = &mut span.content {
+                    v.active = 0;
+                    v.activate_base();
+                }
+            });
+
+            file.code.save_to_file(&file.path)?;
+        }
+
+        Ok(())
     }
 }
 

@@ -140,18 +140,9 @@ pub fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
 }
 
 pub fn run_reset_command(path: &Path) -> anyhow::Result<()> {
-    let project = Project::new(path, None)?;
+    let mut project = Project::new(path, None)?;
 
-    for file in project.files.into_iter() {
-        let mut code = file.code;
-        code.spans.iter_mut().for_each(|span| {
-            if let SpanContent::Variation(v) = &mut span.content {
-                v.active = 0;
-            }
-        });
-
-        code.save_to_file(&file.path)?;
-    }
+    project.reset()?;
 
     log::info!("all variations reset to base");
     println!("all variations reset to base");

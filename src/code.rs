@@ -7,7 +7,7 @@ use anyhow::Context;
 
 use crate::{
     languages::{CustomLanguage, Language},
-    variation::Variation, Variant,
+    variation::Variation,
 };
 
 #[derive(Debug)]

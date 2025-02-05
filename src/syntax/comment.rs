@@ -116,7 +116,10 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
         Variation {
             name,
             tags,
-            base: Variant { name: "base".to_string(), body: base },
+            base: Variant {
+                name: "base".to_string(),
+                body: base,
+            },
             variants,
             active,
             indentation: variation_indentation,
