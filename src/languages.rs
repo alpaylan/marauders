@@ -74,7 +74,7 @@ impl Language {
         match self {
             Language::Coq => "(*".to_string(),
             Language::Haskell => "-{".to_string(),
-            Language::Racket => "|#".to_string(),
+            Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
             Language::Custom(custom) => custom.comment_begin.clone(),
         }
@@ -84,7 +84,7 @@ impl Language {
         match self {
             Language::Coq => "*)".to_string(),
             Language::Haskell => "}-".to_string(),
-            Language::Racket => "#|".to_string(),
+            Language::Racket => "|#".to_string(),
             Language::Rust => "*/".to_string(),
             Language::Custom(custom) => custom.comment_end.clone(),
         }
