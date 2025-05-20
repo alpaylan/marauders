@@ -3,10 +3,12 @@
 /// For each variation, some variant is currently active.
 use std::fmt::Display;
 
+use serde::{Deserialize, Serialize};
+
 /// A variant is a part of a variation that can be used to replace the base code.
 /// A variant has a name and a code.
 /// The name is used to identify the variant.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Variant {
     /// name of the variant
     pub name: String,
@@ -64,7 +66,7 @@ impl Variant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VariantBody {
     InactiveMultiLine {
         lines: Vec<String>,
@@ -113,7 +115,7 @@ impl VariantBody {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Variation {
     /// name of the variation
     pub name: Option<String>,
