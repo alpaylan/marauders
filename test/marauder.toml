@@ -1,4 +1,4 @@
-languages = ["Rust", "Coq"]
+languages = ["Rust", "Roqc"]
 ignore = []
 use_gitignore = false
 

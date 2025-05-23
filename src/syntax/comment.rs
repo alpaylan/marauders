@@ -672,12 +672,12 @@ else join l r
 
     #[test]
     fn test_parse_code_roundtrip() {
-        let code = fs::read_to_string("test/coq/BST.v").unwrap();
+        let code = fs::read_to_string("test/roqc/BST.v").unwrap();
         let spans = parse_code(&code).unwrap();
         let code = Code::new(
-            crate::languages::Language::Coq,
+            crate::languages::Language::Roqc,
             spans.clone(),
-            PathBuf::from("test/coq/BST2.v"),
+            PathBuf::from("test/roqc/BST2.v"),
         );
         let code_as_str = code.to_string();
         let spans2 = parse_code(&code_as_str).unwrap();

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum Language {
-    Coq,
+    Roqc,
     Haskell,
     Racket,
     Rust,
@@ -22,7 +22,7 @@ pub struct CustomLanguage {
 impl Language {
     pub fn file_extension(&self) -> &str {
         match self {
-            Language::Coq => "v",
+            Language::Roqc => "v",
             Language::Haskell => "hs",
             Language::Racket => "rkt",
             Language::Rust => "rs",
@@ -35,7 +35,7 @@ impl Language {
         custom_languages: &Vec<CustomLanguage>,
     ) -> Option<Language> {
         match ext {
-            "v" => Some(Language::Coq),
+            "v" => Some(Language::Roqc),
             "hs" => Some(Language::Haskell),
             "rkt" => Some(Language::Racket),
             "rs" => Some(Language::Rust),
@@ -55,7 +55,7 @@ impl Language {
         custom_languages: &Vec<CustomLanguage>,
     ) -> Option<Language> {
         match name.to_lowercase().as_str() {
-            "coq" => Some(Language::Coq),
+            "roqc" => Some(Language::Roqc),
             "haskell" => Some(Language::Haskell),
             "racket" => Some(Language::Racket),
             "rust" => Some(Language::Rust),
@@ -72,7 +72,7 @@ impl Language {
 
     pub fn comment_begin(&self) -> String {
         match self {
-            Language::Coq => "(*".to_string(),
+            Language::Roqc => "(*".to_string(),
             Language::Haskell => "-{".to_string(),
             Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
@@ -82,7 +82,7 @@ impl Language {
 
     pub fn comment_end(&self) -> String {
         match self {
-            Language::Coq => "*)".to_string(),
+            Language::Roqc => "*)".to_string(),
             Language::Haskell => "}-".to_string(),
             Language::Racket => "|#".to_string(),
             Language::Rust => "*/".to_string(),
@@ -132,7 +132,7 @@ impl Language {
 
     pub fn mutation_marker(&self) -> &str {
         match self {
-            Language::Coq | Language::Haskell | Language::Racket => "!",
+            Language::Roqc | Language::Haskell | Language::Racket => "!",
             Language::Rust => "|",
             Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
         }
