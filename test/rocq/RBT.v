@@ -5,7 +5,7 @@ From ExtLib Require Import Monad.
 From ExtLib.Data.Monads Require Import OptionMonad.
 Import QcNotation.
 Import MonadNotation.
-From Roqc Require Import List.
+From Rocq Require Import List.
 Import ListNotations.
 
 

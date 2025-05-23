@@ -357,9 +357,9 @@ mod tests {
             .iter()
             .map(|f| f.path.clone())
             .collect::<Vec<_>>();
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/BST.v")));
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/RBT.v")));
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/STLC.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/BST.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/RBT.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/STLC.v")));
     }
 
     #[test]
@@ -373,21 +373,21 @@ mod tests {
             .collect::<Vec<_>>();
 
         println!("{:?}", file_paths);
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/BST.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
         assert!(file_paths.contains(&PathBuf::from("src/syntax/mod.rs").canonicalize().unwrap()));
     }
 
     #[test]
     fn test_project_lang() {
-        let project = Project::with_language(Path::new("."), &Language::Roqc).unwrap();
+        let project = Project::with_language(Path::new("."), &Language::Rocq).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
         let file_paths = project
             .files
             .iter()
             .map(|f| f.path.clone().canonicalize().unwrap())
             .collect::<Vec<_>>();
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/BST.v").canonicalize().unwrap()));
-        assert!(file_paths.contains(&PathBuf::from("test/roqc/STLC.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
+        assert!(file_paths.contains(&PathBuf::from("test/rocq/STLC.v").canonicalize().unwrap()));
     }
 
     #[test]
@@ -412,7 +412,7 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/roqc/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
     }
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/roqc/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
         // todo: make this work in the CI
         // assert!(!file_paths.contains(
         //     &PathBuf::from("target/package/marauder-0.0.1/src/cli.rs")
@@ -473,6 +473,6 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         ));
-        assert!(!file_paths.contains(&PathBuf::from("test/roqc/BST.v").canonicalize().unwrap()));
+        assert!(!file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
     }
 }
