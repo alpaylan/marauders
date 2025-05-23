@@ -81,8 +81,6 @@ impl Display for Code {
                             content.push('\n');
                         }
                     } else {
-                        println!("base_indentation: {:?}", v.base.indentation());
-                        println!("indentation: {:?}", v.indentation);
                         let indentation = v.base.indentation().unwrap_or(v.indentation.clone());
                         content.push_str(&indentation);
                         content.push_str(&self.language.variant_body_begin());
@@ -219,10 +217,6 @@ impl Code {
         );
         match self.spans[variation_index].content {
             SpanContent::Variation(ref mut v) => {
-                println!(
-                    "setting active variant '{}' for variation '{}'",
-                    variant_index, variation_index
-                );
                 log::debug!("variants: {:?}", v.variants);
 
                 let variant = if variant_index == 0 {

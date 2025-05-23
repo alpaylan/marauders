@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, FileType},
     path::{Path, PathBuf},
     process::Output,
 };
@@ -82,6 +82,14 @@ impl Project {
         let files = walk
             .filter_map(|entry| {
                 let entry = entry.unwrap();
+                if entry
+                    .file_type()
+                    .map(|f| FileType::is_dir(&f))
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+
                 let code = Code::from_file(entry.path(), &vec![]);
                 match code {
                     Ok(code) => Some(ProjectFile {
@@ -89,7 +97,7 @@ impl Project {
                         code,
                     }),
                     Err(err) => {
-                        log::error!(
+                        log::warn!(
                             "could not read file '{}': {}",
                             entry.path().to_string_lossy(),
                             err
@@ -273,7 +281,6 @@ impl Project {
                 code.set_active_variant(variation_index, variant_index)?;
 
                 log::info!("active variant set to '{}'", variant);
-                println!("active variant set to '{}'", variant);
             } else {
                 variants.extend(
                     code.get_all_variants()

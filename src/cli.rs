@@ -338,7 +338,6 @@ fn run_config_command(config_command: &ConfigCommand) -> anyhow::Result<()> {
     )?;
 
     log::info!("project config updated at '{}'", path.to_string_lossy());
-    println!("project config updated at '{}'", path.to_string_lossy());
 
     Ok(())
 }

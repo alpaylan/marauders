@@ -65,7 +65,6 @@ pub fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> any
             code.set_active_variant(variation_index, variant_index)?;
 
             log::info!("active variant set to '{}'", variant);
-            println!("active variant set to '{}'", variant);
         } else {
             variants.extend(
                 code.get_all_variants()
@@ -126,7 +125,6 @@ pub fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
             code.set_active_variant(variation_index, 0)?;
 
             log::info!("active variant unset");
-            println!("active variant unset");
         } else {
             variants.extend(
                 code.get_all_variants()
@@ -145,7 +143,6 @@ pub fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     project.reset()?;
 
     log::info!("all variations reset to base");
-    println!("all variations reset to base");
 
     Ok(())
 }
@@ -164,7 +161,6 @@ pub fn run_init_command(path: &Path, language: &str, use_gitignore: bool) -> any
     )?;
 
     log::info!("project initialized at '{}'", path.to_string_lossy());
-    println!("project initialized at '{}'", path.to_string_lossy());
 
     Ok(())
 }
