@@ -22,9 +22,9 @@ pub fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()
     Ok(())
 }
 
-pub fn run_set_command(path: &Path, variant: &str) -> anyhow::Result<()> {
+pub fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow::Result<()> {
     // todo: check currently active variant, and do not set it again
-    let project = Project::new(path, None)?;
+    let project = Project::new(path, pattern)?;
 
     let mut found = false;
     let mut variants = vec![];

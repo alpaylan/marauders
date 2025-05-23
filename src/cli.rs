@@ -38,6 +38,8 @@ pub(crate) enum Command {
         path: PathBuf,
         #[clap(short, long)]
         variant: String,
+        #[clap(long)]
+        pattern: Option<String>,
     },
     #[clap(name = "unset", about = "Unset active variant")]
     Unset {
@@ -170,13 +172,13 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
             log::info!("listing variations at '{}'", path.to_string_lossy());
             run_list_command(path, pattern.as_deref())?;
         }
-        Command::Set { path, variant } => {
+        Command::Set { path, variant, pattern } => {
             log::info!(
                 "set active variant '{}' at '{}'",
                 variant,
                 path.to_string_lossy()
             );
-            run_set_command(path, variant)?;
+            run_set_command(path, variant, pattern.as_deref())?;
         }
         Command::Unset { path, variant } => {
             log::info!("unset active variant '{}'", variant);
