@@ -65,6 +65,7 @@ impl Language {
                         return Some(Language::Custom(custom.clone()));
                     }
                 }
+                log::warn!("unknown language: {}", name);
                 None
             }
         }
