@@ -136,7 +136,7 @@ impl Code {
         // read the file and parse it
         let file_content = std::fs::read_to_string(filepath)?;
         let extension = filepath.extension().context(format!(
-            "file extension is not recornized for '{}'",
+            "file extension is not recognized for '{}'",
             filepath.to_string_lossy()
         ))?;
 

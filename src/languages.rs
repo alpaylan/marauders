@@ -6,6 +6,7 @@ pub enum Language {
     Haskell,
     Racket,
     Rust,
+    OCaml,
     #[serde(untagged)]
     Custom(CustomLanguage),
 }
@@ -26,6 +27,7 @@ impl Language {
             Language::Haskell => "hs",
             Language::Racket => "rkt",
             Language::Rust => "rs",
+            Language::OCaml => "ml",
             Language::Custom(custom) => custom.extension.as_str(),
         }
     }
@@ -39,6 +41,7 @@ impl Language {
             "hs" => Some(Language::Haskell),
             "rkt" => Some(Language::Racket),
             "rs" => Some(Language::Rust),
+            "ml" => Some(Language::OCaml),
             _ => {
                 for custom in custom_languages {
                     if custom.extension == ext {
@@ -59,6 +62,7 @@ impl Language {
             "haskell" => Some(Language::Haskell),
             "racket" => Some(Language::Racket),
             "rust" => Some(Language::Rust),
+            "ocaml" => Some(Language::OCaml),
             _ => {
                 for custom in custom_languages {
                     if custom.name == name {
@@ -77,6 +81,7 @@ impl Language {
             Language::Haskell => "-{".to_string(),
             Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
+            Language::OCaml => "(*".to_string(),
             Language::Custom(custom) => custom.comment_begin.clone(),
         }
     }
@@ -87,6 +92,7 @@ impl Language {
             Language::Haskell => "}-".to_string(),
             Language::Racket => "|#".to_string(),
             Language::Rust => "*/".to_string(),
+            Language::OCaml => "*)".to_string(),
             Language::Custom(custom) => custom.comment_end.clone(),
         }
     }
@@ -133,7 +139,7 @@ impl Language {
 
     pub fn mutation_marker(&self) -> &str {
         match self {
-            Language::Rocq | Language::Haskell | Language::Racket => "!",
+            Language::Rocq | Language::Haskell | Language::Racket | Language::OCaml => "!",
             Language::Rust => "|",
             Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
         }
