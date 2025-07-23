@@ -141,7 +141,10 @@ impl Project {
                 if entry.file_type().unwrap().is_dir() {
                     return None;
                 }
-
+                log::trace!(
+                    "found file: {}",
+                    entry.path().to_string_lossy()
+                );
                 let code = Code::from_file(entry.path(), &config.custom_languages);
                 match code {
                     Ok(code) => Some(ProjectFile {

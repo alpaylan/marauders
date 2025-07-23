@@ -38,8 +38,8 @@ tags = { "[" ~ WHITE_SPACE? ~ tag ~ (WHITE_SPACE? ~ "," ~ WHITE_SPACE? ~ tag)* ~
 // Tag ::= Identifier
 tag = { identifier }
 
-comment_begin = { "(*" | "/*" | "-{" | "#|" }
-comment_end   = { "*)" | "*/" | "}-" | "|#" }
+comment_begin = { "(*" | "/*" | "{-" | "#|" }
+comment_end   = { "*)" | "*/" | "-}" | "|#" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
 

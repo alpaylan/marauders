@@ -148,6 +148,11 @@ impl Code {
             ))?,
             custom_languages,
         );
+        log::trace!(
+            "detected language for '{}': {}",
+            filepath.to_string_lossy(),
+            language.as_ref().map_or("unknown", |l| l.file_extension())
+        );
 
         if language.is_none() {
             anyhow::bail!(

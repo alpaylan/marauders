@@ -10,7 +10,12 @@ pub fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()
     let project = Project::new(path, pattern)?;
 
     for file in project.files.iter() {
+        log::trace!(
+            "file: {}",
+            file.path.to_string_lossy()
+        );
         let code = &file.code;
+        log::trace!("{} spans", code.spans.len());
 
         for span in code.spans.iter() {
             if let SpanContent::Variation(v) = &span.content {
