@@ -78,7 +78,7 @@ impl Language {
     pub fn comment_begin(&self) -> String {
         match self {
             Language::Rocq => "(*".to_string(),
-            Language::Haskell => "-{".to_string(),
+            Language::Haskell => "{-".to_string(),
             Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
             Language::OCaml => "(*".to_string(),
@@ -89,7 +89,7 @@ impl Language {
     pub fn comment_end(&self) -> String {
         match self {
             Language::Rocq => "*)".to_string(),
-            Language::Haskell => "}-".to_string(),
+            Language::Haskell => "-}".to_string(),
             Language::Racket => "|#".to_string(),
             Language::Rust => "*/".to_string(),
             Language::OCaml => "*)".to_string(),

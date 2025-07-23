@@ -88,7 +88,7 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     // only one of the variants or the base can be active
     let actives = variants.iter().filter(|v| v.is_active()).count();
     let active = if let VariantBody::Active { .. } = base {
-        assert_eq!(actives, 0);
+        assert_eq!(actives, 0, "all active variants are {}", variants.iter().filter(|v| v.is_active()).map(|v| v.name.as_str()).collect::<Vec<_>>().join(", "));
         0
     } else {
         assert_eq!(actives, 1);
