@@ -7,6 +7,7 @@ pub enum Language {
     Racket,
     Rust,
     OCaml,
+    Python,
     #[serde(untagged)]
     Custom(CustomLanguage),
 }
@@ -28,6 +29,7 @@ impl Language {
             Language::Racket => "rkt",
             Language::Rust => "rs",
             Language::OCaml => "ml",
+            Language::Python => "py",
             Language::Custom(custom) => custom.extension.as_str(),
         }
     }
@@ -82,6 +84,7 @@ impl Language {
             Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
             Language::OCaml => "(*".to_string(),
+            Language::Python => "#".to_string(),
             Language::Custom(custom) => custom.comment_begin.clone(),
         }
     }
@@ -94,6 +97,7 @@ impl Language {
             Language::Rust => "*/".to_string(),
             Language::OCaml => "*)".to_string(),
             Language::Custom(custom) => custom.comment_end.clone(),
+            Language::Python => "\n".to_string(),
         }
     }
 
@@ -139,7 +143,11 @@ impl Language {
 
     pub fn mutation_marker(&self) -> &str {
         match self {
-            Language::Rocq | Language::Haskell | Language::Racket | Language::OCaml => "!",
+            Language::Rocq
+            | Language::Haskell
+            | Language::Racket
+            | Language::OCaml
+            | Language::Python => "!",
             Language::Rust => "|",
             Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
         }
