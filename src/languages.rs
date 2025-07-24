@@ -65,6 +65,7 @@ impl Language {
             "racket" => Some(Language::Racket),
             "rust" => Some(Language::Rust),
             "ocaml" => Some(Language::OCaml),
+            "python" => Some(Language::Python),
             _ => {
                 for custom in custom_languages {
                     if custom.name == name {
