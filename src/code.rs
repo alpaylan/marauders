@@ -163,6 +163,12 @@ impl Code {
         let language = language.unwrap();
 
         let spans = crate::syntax::comment::parse_code(&file_content)?;
+        log::debug!(
+            "parsed {} spans from file '{}'",
+            spans.len(),
+            filepath.to_string_lossy()
+        );
+        log::trace!("spans: {:#?}", spans);
         Ok(Code::new(language, spans, filepath.to_path_buf()))
     }
 

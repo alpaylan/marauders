@@ -56,10 +56,20 @@ impl Variant {
                 };
             }
             VariantBody::Active { lines } => {
+                let indentation = lines
+                    .first()
+                    .and_then(|line| {
+                        line.chars()
+                            .take_while(|c| c.is_whitespace())
+                            .collect::<String>()
+                            .into()
+                    })
+                    .unwrap_or("".to_string());
+
                 let line = lines.join("\n");
                 self.body = VariantBody::InactiveMultiLine {
                     lines: vec![line],
-                    indentation: "".to_string(),
+                    indentation,
                 };
             }
         }

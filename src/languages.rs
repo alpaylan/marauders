@@ -44,6 +44,7 @@ impl Language {
             "rkt" => Some(Language::Racket),
             "rs" => Some(Language::Rust),
             "ml" => Some(Language::OCaml),
+            "py" => Some(Language::Python),
             _ => {
                 for custom in custom_languages {
                     if custom.extension == ext {
@@ -85,7 +86,7 @@ impl Language {
             Language::Racket => "#|".to_string(),
             Language::Rust => "/*".to_string(),
             Language::OCaml => "(*".to_string(),
-            Language::Python => "#".to_string(),
+            Language::Python => r#"""""#.to_string(),
             Language::Custom(custom) => custom.comment_begin.clone(),
         }
     }
@@ -98,7 +99,7 @@ impl Language {
             Language::Rust => "*/".to_string(),
             Language::OCaml => "*)".to_string(),
             Language::Custom(custom) => custom.comment_end.clone(),
-            Language::Python => "\n".to_string(),
+            Language::Python => r#"""""#.to_string(),
         }
     }
 

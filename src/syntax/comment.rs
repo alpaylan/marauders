@@ -37,14 +37,17 @@ fn parse_span(
     match pair.as_rule() {
         Rule::line | Rule::last_line => {
             if spans.is_empty() {
+                log::trace!("adding first line: {:?}", pair.as_str());
                 spans.push(Span::constant(pair.as_str().to_string(), line));
             } else {
                 let last = spans.last_mut().unwrap();
                 match &last.content {
                     SpanContent::Line(c) => {
+                        log::trace!("adding line: {:?}", pair.as_str());
                         last.content = SpanContent::Line(format!("{}{}", c, pair.as_str()));
                     }
                     SpanContent::Variation(_) => {
+                        log::trace!("adding variation: {:?}", pair.as_str());
                         spans.push(Span::constant(pair.as_str().to_string(), line));
                     }
                 }
@@ -55,6 +58,7 @@ fn parse_span(
             let mut pair = pair.into_inner();
             let pair = pair.next().unwrap();
             let (variation, current_lines) = parse_variation(pair);
+            log::trace!("adding variation: {:?}", variation);
             spans.push(Span::variation(variation, line));
             current_lines
         }
@@ -69,10 +73,16 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
     let header = pairs.next().unwrap();
 
     let (name, tags, variation_indentation) = parse_variation_header(header);
+    log::trace!(
+        "adding variation header: (name={:?}, tags={:?}, indentation={:?})",
+        name,
+        tags,
+        variation_indentation
+    );
     let base = pairs.next().unwrap();
 
     let base = parse_base(base);
-
+    log::trace!("adding variation base: {:?}", base);
     let mut variants = vec![];
 
     for pair in pairs {
@@ -83,12 +93,23 @@ fn parse_variation(pair: pest::iterators::Pair<Rule>) -> (Variation, usize) {
         assert!(pair.as_rule() == Rule::variant);
 
         variants.push(parse_variant(pair));
+        log::trace!("adding variation variant: {:?}", variants.last().unwrap());
     }
 
     // only one of the variants or the base can be active
     let actives = variants.iter().filter(|v| v.is_active()).count();
     let active = if let VariantBody::Active { .. } = base {
-        assert_eq!(actives, 0, "all active variants are {}", variants.iter().filter(|v| v.is_active()).map(|v| v.name.as_str()).collect::<Vec<_>>().join(", "));
+        assert_eq!(
+            actives,
+            0,
+            "all active variants are {}",
+            variants
+                .iter()
+                .filter(|v| v.is_active())
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         0
     } else {
         assert_eq!(actives, 1);
@@ -185,11 +206,15 @@ fn parse_variant(pair: pest::iterators::Pair<Rule>) -> Variant {
     let mut pairs = pair.into_inner();
     let header = pairs.next().unwrap();
     let (name, indent) = parse_variant_header(header);
-
+    log::trace!(
+        "adding variant header: (name={:?}, indentation={:?})",
+        name,
+        indent
+    );
     let body = pairs.next().unwrap();
 
     let mut body = parse_variant_body(body);
-
+    log::trace!("adding variant body: {:?}", body);
     match &mut body {
         VariantBody::InactiveMultiLine { indentation, .. }
         | VariantBody::InactiveSingleLine { indentation, .. } => {
