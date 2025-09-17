@@ -19,6 +19,7 @@ use crate::{
 pub struct Project {
     pub root: PathBuf,
     pub files: Vec<ProjectFile>,
+    pub config: Option<ProjectConfig>,
 }
 
 #[derive(Debug)]
@@ -62,7 +63,7 @@ impl Project {
                 log::warn!("ignoring pattern, project config found");
             }
             let project_config: ProjectConfig = toml::from_str(&cfg)?;
-            Project::with_config(path, &project_config)
+            Project::with_config(path, project_config)
         } else {
             Project::with_pattern(path, pattern)
         }
@@ -108,10 +109,14 @@ impl Project {
             })
             .collect();
 
-        Ok(Project { root, files })
+        Ok(Project {
+            root,
+            files,
+            config: None,
+        })
     }
 
-    pub fn with_config(path: &Path, config: &ProjectConfig) -> anyhow::Result<Self> {
+    pub fn with_config(path: &Path, config: ProjectConfig) -> anyhow::Result<Self> {
         let root = PathBuf::from(path);
 
         let mut overrides = OverrideBuilder::new(path);
@@ -141,10 +146,7 @@ impl Project {
                 if entry.file_type().unwrap().is_dir() {
                     return None;
                 }
-                log::trace!(
-                    "found file: {}",
-                    entry.path().to_string_lossy()
-                );
+                log::trace!("found file: {}", entry.path().to_string_lossy());
                 let code = Code::from_file(entry.path(), &config.custom_languages);
                 match code {
                     Ok(code) => Some(ProjectFile {
@@ -163,7 +165,11 @@ impl Project {
             })
             .collect::<Vec<ProjectFile>>();
 
-        Ok(Project { root, files })
+        Ok(Project {
+            root,
+            files,
+            config: Some(config),
+        })
     }
 
     pub fn with_language(path: &Path, lang: &Language) -> anyhow::Result<Self> {
@@ -401,7 +407,7 @@ mod tests {
             use_gitignore: false,
             custom_languages: vec![],
         };
-        let project = Project::with_config(Path::new("."), &config).unwrap();
+        let project = Project::with_config(Path::new("."), config).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
 
         let file_paths = project
@@ -426,7 +432,7 @@ mod tests {
             use_gitignore: true,
             custom_languages: vec![],
         };
-        let project = Project::with_config(Path::new("."), &config).unwrap();
+        let project = Project::with_config(Path::new("."), config).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
 
         let file_paths = project
@@ -463,7 +469,7 @@ mod tests {
                 mutation_marker: "|".to_string(),
             }],
         };
-        let project = Project::with_config(Path::new("."), &config).unwrap();
+        let project = Project::with_config(Path::new("."), config).unwrap();
         assert_eq!(project.root, PathBuf::from("."));
         let file_paths = project
             .files
