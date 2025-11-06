@@ -8,3 +8,11 @@ extension = "kl"
 comment_begin = "#|"
 comment_end = "|#"
 mutation_marker = "!"
+
+[[custom_languages]]
+name = "cn"
+extension = "c"
+comment_begin = "//"
+comment_end = "//"
+mutation_marker = "!"
+

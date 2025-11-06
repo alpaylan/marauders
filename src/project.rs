@@ -54,7 +54,11 @@ impl Default for ProjectConfig {
 
 impl Project {
     pub fn new(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
-        let cfg = fs::read_to_string(path.join("marauder.toml")).ok();
+        let cfg = if let Some(cfg_path) = std::env::var("MARAUDER_CONFIG").ok() {
+            fs::read_to_string(cfg_path).ok()
+        } else {
+            fs::read_to_string(path.join("marauder.toml")).ok()
+        };
 
         if let Some(cfg) = cfg {
             log::info!("found project config at '{}'", path.to_string_lossy());
