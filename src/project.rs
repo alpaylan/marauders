@@ -375,7 +375,8 @@ mod tests {
         assert!(file_paths.contains(&PathBuf::from("test/rocq/STLC.v")));
         assert!(file_paths.contains(&PathBuf::from("test/racket/BST.rkt")));
         assert!(file_paths.contains(&PathBuf::from("test/python/bst.py")));
-        assert_eq!(project.files.len(), 5);
+        assert!(file_paths.contains(&PathBuf::from("test/haskell/BST.hs")));
+        assert_eq!(project.files.len(), 6);
     }
 
     #[test]

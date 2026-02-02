@@ -33,12 +33,6 @@ pub use api::*;
 /// * `code`: Contains the way marauders handle the code it analyzes and processes.
 pub mod code;
 pub use code::*;
-/// * `commands`: Contains the logic for the different commands that marauders can execute.
-pub(crate) mod commands;
-// Re-export command functions for CLI binary
-pub use commands::{
-    run_init_command, run_list_command, run_reset_command, run_set_command, run_unset_command,
-};
 /// * `languages`: Contains the language specific details for marauders supported languages.
 pub mod languages;
 pub use languages::*;
