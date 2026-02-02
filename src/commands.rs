@@ -9,7 +9,7 @@ use std::path::Path;
 use crate::api::{self, ApiError};
 use crate::Project;
 
-pub fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
+pub(crate) fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
     let project = Project::new(path, pattern)?;
 
     for info in api::list_variations(&project) {
@@ -33,7 +33,11 @@ pub fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()
     Ok(())
 }
 
-pub fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow::Result<()> {
+pub(crate) fn run_set_command(
+    path: &Path,
+    variant: &str,
+    pattern: Option<&str>,
+) -> anyhow::Result<()> {
     let mut project = Project::new(path, pattern)?;
 
     match api::set_variant(&mut project, variant) {
@@ -67,7 +71,7 @@ pub fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> any
     }
 }
 
-pub fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
+pub(crate) fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     let mut project = Project::new(path, None)?;
 
     match api::unset_variant(&mut project, variant) {
@@ -95,7 +99,7 @@ pub fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn run_reset_command(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     let mut project = Project::new(path, None)?;
 
     let results = api::reset_all(&mut project)?;
@@ -103,16 +107,17 @@ pub fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     if results.is_empty() {
         log::info!("all variations already at base");
     } else {
-        log::info!(
-            "reset {} variation(s) to base",
-            results.len()
-        );
+        log::info!("reset {} variation(s) to base", results.len());
     }
 
     Ok(())
 }
 
-pub fn run_init_command(path: &Path, language: &str, use_gitignore: bool) -> anyhow::Result<()> {
+pub(crate) fn run_init_command(
+    path: &Path,
+    language: &str,
+    use_gitignore: bool,
+) -> anyhow::Result<()> {
     let config_path = api::init_project(path, language, use_gitignore)?;
 
     log::info!("project initialized at '{}'", config_path.to_string_lossy());
