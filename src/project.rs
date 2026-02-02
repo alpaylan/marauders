@@ -364,15 +364,18 @@ mod tests {
     fn test_project_new() {
         let project = Project::with_pattern(Path::new("test"), None).unwrap();
         assert_eq!(project.root, PathBuf::from("test"));
-        assert_eq!(project.files.len(), 3);
         let file_paths = project
             .files
             .iter()
             .map(|f| f.path.clone())
             .collect::<Vec<_>>();
+        // Should find all supported language files in test directory
         assert!(file_paths.contains(&PathBuf::from("test/rocq/BST.v")));
         assert!(file_paths.contains(&PathBuf::from("test/rocq/RBT.v")));
         assert!(file_paths.contains(&PathBuf::from("test/rocq/STLC.v")));
+        assert!(file_paths.contains(&PathBuf::from("test/racket/BST.rkt")));
+        assert!(file_paths.contains(&PathBuf::from("test/python/bst.py")));
+        assert_eq!(project.files.len(), 5);
     }
 
     #[test]

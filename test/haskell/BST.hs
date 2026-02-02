@@ -57,6 +57,7 @@ delete k (T l k' v' r)
   | k < k' = T l k' v' (delete k r)
   | otherwise = join l r
   -}
+  {- !-}
 
 join :: Tree k v -> Tree k v -> Tree k v
 join E r = r
@@ -92,6 +93,7 @@ union (T l k v r) (T l' k' v' r')
                        (union r (T (above k l') k' v' r'))
   | otherwise = union (T l' k' v' r') (T l k v r)
 -}
+{- !-}
 
 below :: Ord k => k -> Tree k v -> Tree k v
 below _ E = E
