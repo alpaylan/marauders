@@ -2,6 +2,7 @@
 name = "marauders"
 version = "0.0.12"
 edition = "2021"
+default-run = "marauders"
 description = "A work-in-progress code mutation tool"
 license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -15,12 +16,20 @@ insta = "1.41.1"
 log = "0.4.22"
 pest = "2.7.15"
 pest_derive = "2.7.15"
+proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
+quote = "1.0.38"
 serde = { version = "1.0.217", features = ["serde_derive"] }
+serde_json = "1.0.138"
+syn = { version = "2.0.96", features = ["full", "visit"] }
 toml = "0.8.19"
 
 [[bin]]
 name = "marauders"
 path = "src/cli.rs"
+
+[[bin]]
+name = "marauders-import-rust-mutants"
+path = "src/import_rust_mutants_cli.rs"
 
 [lib]
 name = "marauders"

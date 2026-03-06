@@ -162,7 +162,29 @@ impl Code {
         }
         let language = language.unwrap();
 
-        let spans = crate::syntax::comment::parse_code(&file_content)?;
+        let spans = match language {
+            Language::Rust => {
+                let functional_language =
+                    crate::syntax::functional::functional_language_for_extension("rs").unwrap();
+                if crate::syntax::functional::looks_like_mutations(
+                    functional_language,
+                    &file_content,
+                ) {
+                    let functional_spans = crate::syntax::functional::parse_variations(
+                        functional_language,
+                        &file_content,
+                    );
+                    if functional_spans.is_empty() {
+                        crate::syntax::comment::parse_code(&file_content)?
+                    } else {
+                        functional_spans
+                    }
+                } else {
+                    crate::syntax::comment::parse_code(&file_content)?
+                }
+            }
+            _ => crate::syntax::comment::parse_code(&file_content)?,
+        };
         log::debug!(
             "parsed {} spans from file '{}'",
             spans.len(),

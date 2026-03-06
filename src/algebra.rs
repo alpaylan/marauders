@@ -50,7 +50,7 @@ impl Expr {
     ) -> anyhow::Result<Vec<Vec<String>>> {
         // Distributes tags +t into (t1 + t2 + ... + tn) and *t into (t1 * t2 * ... * tn)
         let tagless_expr = self.distribute_tags(tag_map);
-        // Distributes variations v into (v1 + v2 + ... + vn)
+        // Distributes variation v into a sum of its alternatives
         let variation_distributed = tagless_expr.distribute_variations(variation_map);
         // Check that all the variants in the expression are in the variant list
         let mut variants = vec![];

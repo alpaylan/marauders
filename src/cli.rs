@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use marauders::{algebra, api, ApiError, CustomLanguage, Language, Project, ProjectConfig};
 
 fn main() -> anyhow::Result<()> {
@@ -76,6 +76,25 @@ pub(crate) enum Command {
         /// Whether to print the output or not
         nocapture: bool,
     },
+    #[clap(
+        name = "convert",
+        about = "Convert mutation syntax in a file (comment <-> {preprocessor,patch,match-replace}, Rust: comment <-> functional)"
+    )]
+    Convert {
+        #[clap(short, long)]
+        path: PathBuf,
+        #[clap(short, long, value_enum)]
+        to: ConvertTarget,
+    },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ConvertTarget {
+    Functional,
+    Comment,
+    Preprocessor,
+    Patch,
+    MatchReplace,
 }
 
 #[derive(Parser)]
@@ -213,8 +232,25 @@ pub(crate) fn run(opts: Opts) -> anyhow::Result<()> {
             log::info!("running tests at '{}'", path.to_string_lossy());
             run_run_command(expr, path, command, *nocapture)?;
         }
+        Command::Convert { path, to } => {
+            run_convert_command(path, to)?;
+        }
     }
 
+    Ok(())
+}
+
+fn run_convert_command(path: &Path, to: &ConvertTarget) -> anyhow::Result<()> {
+    let target = match to {
+        ConvertTarget::Functional => api::ConversionTarget::RustFunctional,
+        ConvertTarget::Comment => api::ConversionTarget::Comment,
+        ConvertTarget::Preprocessor => api::ConversionTarget::Preprocessor,
+        ConvertTarget::Patch => api::ConversionTarget::Patch,
+        ConvertTarget::MatchReplace => api::ConversionTarget::MatchReplace,
+    };
+
+    let converted = api::convert_file(path, target).map_err(|e| anyhow::anyhow!("{}", e))?;
+    log::info!("converted '{}'", converted.to_string_lossy());
     Ok(())
 }
 

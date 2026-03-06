@@ -791,6 +791,68 @@ end."#,
     }
 
     #[test]
+    fn test_inactive_multiline_variant_allows_comment_end_tokens_in_body_lines() {
+        let result = parse_code(
+            r#"fn f() {
+    /*| group_by_sort_reset */
+    let x = 1;
+    /*|| bug13_group_by_sort_order */
+    /*|
+    // (buggy: no reset of remaining sort_order positions)
+    */
+    /* |*/
+}"#,
+        )
+        .unwrap();
+
+        if let SpanContent::Variation(v) = &result[1].content {
+            assert_eq!(v.name, Some("group_by_sort_reset".to_string()));
+            assert_eq!(v.active, 0);
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "bug13_group_by_sort_order");
+            assert!(matches!(
+                v.variants[0].body,
+                VariantBody::InactiveMultiLine { .. }
+            ));
+            assert_eq!(
+                v.variants[0].lines(),
+                vec!["    // (buggy: no reset of remaining sort_order positions)",]
+            );
+        } else {
+            panic!("unexpected span content {:?}", result[1].content);
+        }
+    }
+
+    #[test]
+    fn test_inactive_multiline_variant_allows_empty_body() {
+        let result = parse_code(
+            r#"fn f() {
+    /*| bug1_left_join_case_iif_case */
+    let x = 1;
+    /*|| bug1_left_join_case_iif_case */
+    /*|
+     */
+    /* |*/
+}"#,
+        )
+        .unwrap();
+
+        if let SpanContent::Variation(v) = &result[1].content {
+            assert_eq!(v.name, Some("bug1_left_join_case_iif_case".to_string()));
+            assert_eq!(v.active, 0);
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "bug1_left_join_case_iif_case");
+            assert!(matches!(
+                v.variants[0].body,
+                VariantBody::InactiveMultiLine { .. }
+            ));
+            assert_eq!(v.variants[0].lines(), Vec::<String>::new());
+        } else {
+            panic!("unexpected span content {:?}", result[1].content);
+        }
+    }
+
+    #[test]
     fn test_single_line_variant() {
         let result = parse_code(
             r#"
@@ -821,5 +883,12 @@ end."#,
         } else {
             panic!("unexpected span content {:?}", result[1].content);
         }
+    }
+
+    #[test]
+    fn test_single_line_file_without_trailing_newline() {
+        let result = parse_code("const DEFAULT_PRECISION: u64 = 100;").unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0].content, SpanContent::Line(_)));
     }
 }

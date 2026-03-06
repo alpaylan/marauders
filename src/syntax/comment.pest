@@ -2,7 +2,7 @@ NL = _{ "\n" | "\r" }
 
 MUTANT_MARKER = _{ "!" | "|" }
 
-code = { (mutation | line)+ ~ last_line? }
+code = { (mutation | line)* ~ last_line? }
 
 line             = { indent? ~ !variation_end ~ single_line_text ~ NL }
 last_line        = { indent? ~ single_line_text }
@@ -43,8 +43,8 @@ comment_end   = { "*)" | "*/" | "-}" | "|#" | "//" | "\"\"\"" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
 
-comment_text             = { comment_line+ }
-comment_line             = { indent? ~ single_line_comment_text ~ NL }
+comment_text             = { comment_line* }
+comment_line             = { !(indent? ~ comment_end ~ NL) ~ (!NL ~ ANY)* ~ NL }
 single_line_comment_text = { (!NL ~ !comment_end ~ ANY)* }
 
 program = { SOI ~ code ~ EOI }
