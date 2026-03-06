@@ -21,6 +21,9 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
+      - name: Validate installer script
+        run: sh -n marauders-installer.sh
+
   build:
     needs:
       - test
@@ -100,6 +103,11 @@ jobs:
           path: dist
           pattern: marauders-*
           merge-multiple: true
+
+      - name: Add installer script
+        run: |
+          cp marauders-installer.sh dist/marauders-installer.sh
+          chmod +x dist/marauders-installer.sh
 
       - name: Generate checksums
         run: |

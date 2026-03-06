@@ -25,9 +25,20 @@ Current Capabilities:
 
 ## Installation
 
+From crates.io:
+
 ```bash
 cargo install marauders
 ```
+
+From GitHub Releases (prebuilt binaries for Linux/macOS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alpaylan/marauders/main/marauders-installer.sh | sh
+```
+
+This installs both `marauders` and `marauders-import-rust-mutants` into
+`$HOME/.local/bin` by default.
 
 ## Usage
 
