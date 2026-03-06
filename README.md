@@ -114,21 +114,21 @@ to the code. The comment syntax is as follows:
 
 ```rust
 fn add(a: i32, b: i32) -> i32 {
-    /*! add_variation */
+    /*| add [arith, core] */
     a + b
-    /*!! add_mutation_1 */
-    /*!
+    /*|| add_1 */
+    /*|
     a - b
     */
-    /*! add_mutation_2 */
-    /*!
+    /*|| add_2 */
+    /*|
     a * b
     */
-    /* !*/
+    /* |*/
 }
 ```
 
-This code has 1 variation, named `add_variation`, and 2 variants within the variation, named `add_mutation_1` and `add_mutation_2`. A Pest grammar of the syntax can be found at `src/comment.pest`. It is also possible to tag variations and variants with tags, as tags can be used to select specific subsets of mutations to apply.
+This code has 1 variation, named `add`, and 2 variants within the variation, named `add_1` and `add_2`. A Pest grammar of the syntax can be found at `src/syntax/comment.pest`. It is also possible to tag variations and variants with tags, as tags can be used to select specific subsets of mutations to apply.
 
 ### Preprocessor Macros
 
@@ -136,12 +136,12 @@ C preprocessor macros are a language independent way to express mutations in cod
 
 ```c
 int add(int a, int b) {
-    #if defined(add_variation) && !defined(add_mutation_1) && !defined(add_mutation_2)
-    return a + b;
-    #elif defined(add_mutation_1)
+    #if defined(M_add_1) /* marauders:variation=add;tags=arith,core */
     return a - b;
-    #elif defined(add_mutation_2)
+    #elif defined(M_add_2)
     return a * b;
+    #else
+    return a + b;
     #endif
 }
 ```
@@ -152,16 +152,24 @@ Functional mutations are a mechanism for expressing mutations within code, using
 
 ```rust
 fn add(a: i32, b: i32) -> i32 {
-    match std::env::var("add_variation") {
-        Ok("base") | Err(_) => a + b,
-        Ok("add_mutation_1") => a - b,
-        Ok("add_mutation_2") => a * b,
-        _ => panic!("Unknown variation"),
+    /* marauders:variation=add;tags=arith,core */
+    match () {
+        _ if matches!(std::env::var("M_add_1").as_deref(), Ok("active")) => {
+            a - b
+        },
+        _ if matches!(std::env::var("M_add_2").as_deref(), Ok("active")) => {
+            a * b
+        },
+        _ => {
+            a + b
+        },
     }
 }
 ```
 
-The environment variable `add_variation` is used to select the variation to apply. A very
+Each variant is selected via an environment variable named `M_<variant>` set to `active`
+(for example `M_add_1=active`). If no variant is active, execution falls back to the base
+branch. A very
 important benefit of this mechanism is that it does not require multiple compilation steps,
 which is an issue with all other mutation types. Although, the downside is it is very intrusive within the code, reducing readability, and maintainability.
 
