@@ -271,6 +271,110 @@ pub fn unset_variant(project: &mut Project, variant: &str) -> Result<SetResult, 
     })
 }
 
+/// Tries to set a variant through a match-replace sidecar document.
+///
+/// This is used when the source file has already been converted to base code
+/// and mutations live in `<source>.match_replace.json`.
+///
+/// Returns:
+/// - `Ok(Some(SetResult))` when a match-replace document was found and applied.
+/// - `Ok(None)` when no match-replace document is associated with `path`.
+pub fn try_set_variant_match_replace(
+    path: &Path,
+    variant: &str,
+) -> Result<Option<SetResult>, ApiError> {
+    let Some((_doc_path, content)) = load_match_replace_document(path)? else {
+        return Ok(None);
+    };
+
+    let available = crate::syntax::match_replace::list_variant_names(&content)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    if !available.iter().any(|v| v == variant) {
+        return Err(ApiError::VariantNotFound {
+            variant: variant.to_string(),
+            available,
+        });
+    }
+
+    let applied = crate::syntax::match_replace::set_variant_in_match_replace(&content, variant)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+
+    if applied.previous_active == applied.new_active {
+        return Err(ApiError::AlreadyActive {
+            variant: variant.to_string(),
+        });
+    }
+
+    Ok(Some(SetResult {
+        file: applied.source_path,
+        variation: applied.variation_name,
+        previous_active: applied.previous_active,
+        new_active: applied.new_active,
+    }))
+}
+
+/// Tries to unset a variant through a match-replace sidecar document.
+///
+/// Returns:
+/// - `Ok(Some(SetResult))` when a match-replace document was found and applied.
+/// - `Ok(None)` when no match-replace document is associated with `path`.
+pub fn try_unset_variant_match_replace(
+    path: &Path,
+    variant: &str,
+) -> Result<Option<SetResult>, ApiError> {
+    let Some((_doc_path, content)) = load_match_replace_document(path)? else {
+        return Ok(None);
+    };
+
+    let available = crate::syntax::match_replace::list_variant_names(&content)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    if !available.iter().any(|v| v == variant) {
+        return Err(ApiError::VariantNotFound {
+            variant: variant.to_string(),
+            available,
+        });
+    }
+
+    let applied = crate::syntax::match_replace::unset_variant_in_match_replace(&content, variant)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+
+    Ok(Some(SetResult {
+        file: applied.source_path,
+        variation: applied.variation_name,
+        previous_active: applied.previous_active,
+        new_active: applied.new_active,
+    }))
+}
+
+fn load_match_replace_document(path: &Path) -> Result<Option<(PathBuf, String)>, ApiError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        let content = std::fs::read_to_string(path)?;
+        if crate::syntax::match_replace::looks_like_mutations(&content) {
+            return Ok(Some((path.to_path_buf(), content)));
+        }
+        return Ok(None);
+    }
+
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    let sidecar = path.with_file_name(format!("{file_name}.match_replace.json"));
+    if !sidecar.is_file() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&sidecar)?;
+    if crate::syntax::match_replace::looks_like_mutations(&content) {
+        Ok(Some((sidecar, content)))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Resets all variations to base in the project.
 ///
 /// # Arguments
@@ -1647,6 +1751,60 @@ fn calc(a: i32, b: i32) -> i32 {
 
         let _ = std::fs::remove_file(&tmp);
         let _ = std::fs::remove_file(&result);
+    }
+
+    #[test]
+    fn test_try_set_unset_variant_match_replace_without_conversion_to_comment() {
+        let original = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| add_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+        let tmp = std::env::temp_dir().join(format!(
+            "marauders_convert_{}_match_replace_set_unset.rs",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, original).unwrap();
+
+        let sidecar = convert_file(&tmp, ConversionTarget::MatchReplace).unwrap();
+        assert!(sidecar.to_string_lossy().ends_with(".match_replace.json"));
+
+        // Source file now contains only the base program; activate directly via sidecar.
+        let set_result = try_set_variant_match_replace(&tmp, "add_1")
+            .unwrap()
+            .expect("expected sidecar-backed set");
+        assert_eq!(set_result.previous_active, 0);
+        assert_eq!(set_result.new_active, 1);
+        let after_set = std::fs::read_to_string(&tmp).unwrap();
+        assert!(after_set.contains("a - b"));
+        assert!(!after_set.contains("a + b"));
+
+        let already_active = try_set_variant_match_replace(&tmp, "add_1").unwrap_err();
+        assert!(matches!(already_active, ApiError::AlreadyActive { .. }));
+
+        let unset_result = try_unset_variant_match_replace(&tmp, "add_1")
+            .unwrap()
+            .expect("expected sidecar-backed unset");
+        assert_eq!(unset_result.previous_active, 1);
+        assert_eq!(unset_result.new_active, 0);
+        let after_unset = std::fs::read_to_string(&tmp).unwrap();
+        assert!(after_unset.contains("a + b"));
+        assert!(!after_unset.contains("a - b"));
+
+        // Directly passing the sidecar path should also work.
+        let set_via_sidecar = try_set_variant_match_replace(&sidecar, "add_1")
+            .unwrap()
+            .expect("expected direct sidecar set");
+        assert_eq!(set_via_sidecar.new_active, 1);
+
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&sidecar);
     }
 
     #[test]

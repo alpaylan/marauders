@@ -6,6 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::code::{Span, SpanContent};
 use crate::languages::Language;
 
+#[derive(Debug, Clone)]
+pub(crate) struct MatchReplaceApplyResult {
+    pub(crate) source_path: PathBuf,
+    pub(crate) variation_name: Option<String>,
+    pub(crate) previous_active: usize,
+    pub(crate) new_active: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MatchReplaceVariation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,6 +36,29 @@ struct MatchReplaceVariant {
 
 pub(crate) fn looks_like_mutations(input: &str) -> bool {
     parse_document(input).is_ok()
+}
+
+pub(crate) fn list_variant_names(input: &str) -> anyhow::Result<Vec<String>> {
+    let document = parse_document(input)?;
+    Ok(document
+        .variations
+        .into_iter()
+        .flat_map(|variation| variation.variants.into_iter().map(|variant| variant.name))
+        .collect())
+}
+
+pub(crate) fn set_variant_in_match_replace(
+    input: &str,
+    variant_name: &str,
+) -> anyhow::Result<MatchReplaceApplyResult> {
+    apply_variant_in_match_replace(input, variant_name, true)
+}
+
+pub(crate) fn unset_variant_in_match_replace(
+    input: &str,
+    variant_name: &str,
+) -> anyhow::Result<MatchReplaceApplyResult> {
+    apply_variant_in_match_replace(input, variant_name, false)
 }
 
 pub(crate) fn render_match_replace_code_from_comment(
@@ -186,6 +217,147 @@ fn parse_document(input: &str) -> anyhow::Result<MatchReplaceDocument> {
     }
 
     Ok(MatchReplaceDocument { variations })
+}
+
+fn apply_variant_in_match_replace(
+    input: &str,
+    variant_name: &str,
+    set_variant: bool,
+) -> anyhow::Result<MatchReplaceApplyResult> {
+    let document = parse_document(input)?;
+    let (variation, variant_idx) = document
+        .variations
+        .iter()
+        .find_map(|variation| {
+            variation
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, variant)| variant.name == variant_name)
+                .map(|(idx, _)| (variation, idx))
+        })
+        .ok_or_else(|| anyhow!("variant '{}' not found in match-replace document", variant_name))?;
+
+    let (scope_path, start_line, _end_line) = parse_scope_components(&variation.scope)?;
+    let source_path = PathBuf::from(scope_path);
+    let source = std::fs::read_to_string(&source_path).map_err(|e| {
+        anyhow!(
+            "failed to read source file '{}' referenced by scope: {}",
+            source_path.display(),
+            e
+        )
+    })?;
+    let (mut lines, trailing_newline) = split_lines_preserving_tail(&source);
+
+    let base_lines = split_lines_preserving_tail(&variation.pattern).0;
+    let variant_lines = variation
+        .variants
+        .iter()
+        .map(|variant| split_lines_preserving_tail(&variant.replacement).0)
+        .collect::<Vec<_>>();
+
+    let mut alternatives = Vec::with_capacity(1 + variant_lines.len());
+    alternatives.push(base_lines.clone());
+    alternatives.extend(variant_lines.clone());
+
+    let (start, end_exclusive, current_active) =
+        locate_variation_region(&lines, start_line, &alternatives).ok_or_else(|| {
+            anyhow!(
+                "unable to locate match-replace scope for variant '{}' in '{}'",
+                variant_name,
+                source_path.display()
+            )
+        })?;
+
+    let target_active = if set_variant { variant_idx + 1 } else { 0 };
+    let target_lines = if set_variant {
+        variant_lines[variant_idx].clone()
+    } else {
+        base_lines
+    };
+
+    if current_active != target_active {
+        lines.splice(start..end_exclusive, target_lines);
+        let mut output = lines.join("\n");
+        if trailing_newline {
+            output.push('\n');
+        }
+        std::fs::write(&source_path, output)?;
+    }
+
+    Ok(MatchReplaceApplyResult {
+        source_path,
+        variation_name: variation.name.clone(),
+        previous_active: current_active,
+        new_active: target_active,
+    })
+}
+
+fn locate_variation_region(
+    source_lines: &[String],
+    preferred_start_line: usize,
+    alternatives: &[Vec<String>],
+) -> Option<(usize, usize, usize)> {
+    if alternatives.is_empty() {
+        return None;
+    }
+
+    let preferred_start = preferred_start_line.saturating_sub(1);
+
+    // Fast path: exact match at the recorded scope start line.
+    for (alt_idx, alternative) in alternatives.iter().enumerate() {
+        if alternative.is_empty() {
+            continue;
+        }
+        if preferred_start + alternative.len() > source_lines.len() {
+            continue;
+        }
+        if source_lines[preferred_start..preferred_start + alternative.len()] == alternative[..] {
+            return Some((preferred_start, preferred_start + alternative.len(), alt_idx));
+        }
+    }
+
+    // Fallback: find the closest matching candidate in the file.
+    let mut best: Option<(usize, usize, usize, usize)> = None;
+    for (alt_idx, alternative) in alternatives.iter().enumerate() {
+        if alternative.is_empty() || alternative.len() > source_lines.len() {
+            continue;
+        }
+        for start in 0..=source_lines.len() - alternative.len() {
+            if source_lines[start..start + alternative.len()] != alternative[..] {
+                continue;
+            }
+            let distance = start.abs_diff(preferred_start);
+            match best {
+                Some((best_distance, best_start, best_alt_idx, _)) => {
+                    if distance < best_distance
+                        || (distance == best_distance
+                            && (start < best_start
+                                || (start == best_start && alt_idx < best_alt_idx)))
+                    {
+                        best = Some((distance, start, alt_idx, alternative.len()));
+                    }
+                }
+                None => {
+                    best = Some((distance, start, alt_idx, alternative.len()));
+                }
+            }
+        }
+    }
+
+    if let Some((_, start, alt_idx, len)) = best {
+        return Some((start, start + len, alt_idx));
+    }
+
+    // If nothing matched and we have empty alternatives, assume insertion point.
+    alternatives
+        .iter()
+        .enumerate()
+        .find(|(_, alternative)| alternative.is_empty())
+        .map(|(alt_idx, _)| {
+            let start = preferred_start.min(source_lines.len());
+            (start, start, alt_idx)
+        })
 }
 
 fn render_comment_variation_block(
@@ -416,6 +588,66 @@ fn calc(a: i32, b: i32) -> i32 {
         assert!(roundtrip.contains("/*| add [arith] */"));
         assert!(roundtrip.contains("/*|| add_1 */"));
         assert!(roundtrip.contains("/*|| add_2 */"));
+
+        let _ = std::fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn test_set_unset_variant_in_match_replace() {
+        let comment = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| add_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(comment).unwrap();
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        let source_path = std::env::temp_dir()
+            .join(format!("marauders_match_replace_set_unset_source_{pid}_{nanos}.rs"));
+        let scope_path = source_path.to_string_lossy().to_string();
+
+        let match_replace = render_match_replace_code_from_comment(&spans, &scope_path).unwrap();
+
+        // Match-replace conversion keeps the source file as base.
+        std::fs::write(
+            &source_path,
+            r#"fn calc(a: i32, b: i32) -> i32 {
+    a + b
+}
+"#,
+        )
+        .unwrap();
+
+        let set_result = set_variant_in_match_replace(&match_replace, "add_1").unwrap();
+        assert_eq!(set_result.source_path, source_path);
+        assert_eq!(set_result.previous_active, 0);
+        assert_eq!(set_result.new_active, 1);
+        let after_set = std::fs::read_to_string(&source_path).unwrap();
+        assert!(after_set.contains("a - b"));
+        assert!(!after_set.contains("a + b"));
+
+        // Setting the same variant again is a no-op but still reports the state.
+        let set_again = set_variant_in_match_replace(&match_replace, "add_1").unwrap();
+        assert_eq!(set_again.previous_active, 1);
+        assert_eq!(set_again.new_active, 1);
+
+        let unset_result = unset_variant_in_match_replace(&match_replace, "add_1").unwrap();
+        assert_eq!(unset_result.source_path, source_path);
+        assert_eq!(unset_result.previous_active, 1);
+        assert_eq!(unset_result.new_active, 0);
+        let after_unset = std::fs::read_to_string(&source_path).unwrap();
+        assert!(after_unset.contains("a + b"));
+        assert!(!after_unset.contains("a - b"));
 
         let _ = std::fs::remove_file(source_path);
     }

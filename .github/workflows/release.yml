@@ -54,10 +54,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binaries
-        run: |
-          cargo build --release --locked --target ${{ matrix.target }} \
-            --bin marauders \
-            --bin marauders-import-rust-mutants
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin marauders --bin marauders-import-rust-mutants
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'

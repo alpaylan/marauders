@@ -279,6 +279,39 @@ fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
 }
 
 fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow::Result<()> {
+    if pattern.is_none() && path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        match api::try_set_variant_match_replace(path, variant) {
+            Ok(Some(result)) => {
+                log::info!(
+                    "set variant '{}' in {} (was index {}, now index {})",
+                    variant,
+                    result.file.to_string_lossy(),
+                    result.previous_active,
+                    result.new_active
+                );
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(ApiError::AlreadyActive { variant }) => {
+                log::warn!("variant '{}' is already active", variant);
+                return Ok(());
+            }
+            Err(ApiError::VariantNotFound { variant, available }) => {
+                log::error!(
+                    "variant '{}' not found, possible variants are (\n{}\n)",
+                    variant,
+                    available
+                        .iter()
+                        .map(|v| format!("\t'{}'", v))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(anyhow::anyhow!("{}", e)),
+        }
+    }
+
     let mut project = Project::new(path, pattern)?;
 
     match api::set_variant(&mut project, variant) {
@@ -293,6 +326,28 @@ fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow:
             Ok(())
         }
         Err(ApiError::VariantNotFound { variant, available }) => {
+            if pattern.is_none() {
+                match api::try_set_variant_match_replace(path, &variant) {
+                    Ok(Some(result)) => {
+                        log::info!(
+                            "set variant '{}' in {} (was index {}, now index {})",
+                            variant,
+                            result.file.to_string_lossy(),
+                            result.previous_active,
+                            result.new_active
+                        );
+                        return Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(ApiError::AlreadyActive { variant }) => {
+                        log::warn!("variant '{}' is already active", variant);
+                        return Ok(());
+                    }
+                    Err(ApiError::VariantNotFound { .. }) => {}
+                    Err(e) => return Err(anyhow::anyhow!("{}", e)),
+                }
+            }
+
             log::error!(
                 "variant '{}' not found, possible variants are (\n{}\n)",
                 variant,
@@ -313,6 +368,33 @@ fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow:
 }
 
 fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        match api::try_unset_variant_match_replace(path, variant) {
+            Ok(Some(result)) => {
+                log::info!(
+                    "unset variant in {} (was index {}, now base)",
+                    result.file.to_string_lossy(),
+                    result.previous_active
+                );
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(ApiError::VariantNotFound { variant, available }) => {
+                log::error!(
+                    "variant '{}' not found, possible variants are (\n{}\n)",
+                    variant,
+                    available
+                        .iter()
+                        .map(|v| format!("\t'{}'", v))
+                        .collect::<Vec<String>>()
+                        .join(",\n")
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(anyhow::anyhow!("{}", e)),
+        }
+    }
+
     let mut project = Project::new(path, None)?;
 
     match api::unset_variant(&mut project, variant) {
@@ -325,6 +407,20 @@ fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
             Ok(())
         }
         Err(ApiError::VariantNotFound { variant, available }) => {
+            match api::try_unset_variant_match_replace(path, &variant) {
+                Ok(Some(result)) => {
+                    log::info!(
+                        "unset variant in {} (was index {}, now base)",
+                        result.file.to_string_lossy(),
+                        result.previous_active
+                    );
+                    return Ok(());
+                }
+                Ok(None) => {}
+                Err(ApiError::VariantNotFound { .. }) => {}
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            }
+
             log::error!(
                 "variant '{}' not found, possible variants are (\n{}\n)",
                 variant,
