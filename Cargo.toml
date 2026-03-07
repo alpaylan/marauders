@@ -1,9 +1,10 @@
 [package]
 name = "marauders"
+authors = ["Alperen Keles <alpkeles99@gmail.com>"]
 version = "0.0.12"
 edition = "2021"
 default-run = "marauders"
-description = "A work-in-progress code mutation tool"
+description = "A tool for hand-crafted mutation analysis and management"
 license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
