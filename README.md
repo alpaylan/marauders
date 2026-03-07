@@ -40,6 +40,30 @@ curl -fsSL https://raw.githubusercontent.com/alpaylan/marauders/main/marauders-i
 This installs both `marauders` and `marauders-import-rust-mutants` into
 `$HOME/.local/bin` by default.
 
+## Embedding as a Library
+
+`marauders` now exposes a smaller dependency surface for library users via Cargo
+features.
+
+- `default` features: `full`, `cli` (includes binaries and Rust AST conversion/import stack).
+- `--no-default-features`: library-only build without CLI and Rust AST stack.
+- `syntax-rust-functional`: enable Rust functional conversion support (pulls `syn`/`quote`/`proc-macro2`).
+- `import-rust-mutants`: enable Rust mutant import validation stack.
+
+Minimal embedding example:
+
+```toml
+[dependencies]
+marauders = { version = "0.0.12", default-features = false }
+```
+
+Full tooling (existing behavior):
+
+```toml
+[dependencies]
+marauders = { version = "0.0.12" }
+```
+
 ## Usage
 
 ```bash

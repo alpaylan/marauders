@@ -13,6 +13,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{Language, Project, ProjectConfig, SpanContent};
 
+#[cfg(feature = "rust-ast")]
+fn is_parseable_rust_source(source: &str) -> bool {
+    syn::parse_file(source).is_ok()
+}
+
+#[cfg(not(feature = "rust-ast"))]
+fn is_parseable_rust_source(_source: &str) -> bool {
+    true
+}
+
 /// Information about a variation in the project.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariationInfo {
@@ -908,7 +918,7 @@ pub fn collect_rust_mutants_from_dir(
         if source == base_source {
             continue;
         }
-        if syn::parse_file(&source).is_err() {
+        if !is_parseable_rust_source(&source) {
             continue;
         }
 
@@ -1053,7 +1063,7 @@ fn collect_mutant_sources_from_cargo_mutants_output(
         if mutated == base_source {
             continue;
         }
-        if syn::parse_file(&mutated).is_err() {
+        if !is_parseable_rust_source(&mutated) {
             continue;
         }
         if seen.insert(mutated.clone()) {

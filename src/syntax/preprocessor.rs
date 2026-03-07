@@ -171,7 +171,10 @@ fn parse_variation_block(lines: &[LineEntry], start: usize) -> anyhow::Result<(V
             break;
         }
         if parse_elif_line(text).is_some() || is_else_line(text) {
-            bail!("unexpected preprocessor directive '{}' in '#else' branch", text);
+            bail!(
+                "unexpected preprocessor directive '{}' in '#else' branch",
+                text
+            );
         }
 
         base_lines.push(lines[cursor].text.clone());
@@ -189,7 +192,10 @@ fn parse_variation_block(lines: &[LineEntry], start: usize) -> anyhow::Result<(V
         })
         .collect();
 
-    let variant_names: Vec<String> = variants.iter().map(|variant| variant.name.clone()).collect();
+    let variant_names: Vec<String> = variants
+        .iter()
+        .map(|variant| variant.name.clone())
+        .collect();
     let variation_name = metadata
         .variation_name
         .clone()
@@ -372,7 +378,8 @@ fn calc(a: i32, b: i32) -> i32 {
         assert!(preprocessor.contains("#endif"));
         assert!(preprocessor.contains("marauders:variation=add;tags=arith,core"));
 
-        let roundtrip = render_comment_code_from_preprocessor(Language::Rust, &preprocessor).unwrap();
+        let roundtrip =
+            render_comment_code_from_preprocessor(Language::Rust, &preprocessor).unwrap();
         let roundtrip_spans = crate::syntax::comment::parse_code(&roundtrip).unwrap();
 
         assert_eq!(spans.len(), roundtrip_spans.len());
@@ -382,10 +389,17 @@ fn calc(a: i32, b: i32) -> i32 {
         };
         assert_eq!(variation.name.as_deref(), Some("add"));
         assert_eq!(
-            variation.variants.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
+            variation
+                .variants
+                .iter()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["add_1", "add_2"]
         );
-        assert_eq!(variation.tags, vec!["arith".to_string(), "core".to_string()]);
+        assert_eq!(
+            variation.tags,
+            vec!["arith".to_string(), "core".to_string()]
+        );
     }
 
     #[test]

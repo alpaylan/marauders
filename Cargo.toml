@@ -9,27 +9,39 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.95"
-clap = { version = "4.5.23", features = ["derive"] }
-env_logger = "0.11.6"
+clap = { version = "4.5.23", features = ["derive"], optional = true }
+env_logger = { version = "0.11.6", optional = true }
 ignore = "0.4.23"
-insta = "1.41.1"
 log = "0.4.22"
 pest = "2.7.15"
 pest_derive = "2.7.15"
-proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
-quote = "1.0.38"
+proc-macro2 = { version = "1.0.93", features = ["span-locations"], optional = true }
+quote = { version = "1.0.38", optional = true }
 serde = { version = "1.0.217", features = ["serde_derive"] }
 serde_json = "1.0.138"
-syn = { version = "2.0.96", features = ["full", "visit"] }
+syn = { version = "2.0.96", features = ["full", "visit"], optional = true }
 toml = "0.8.19"
+
+[features]
+default = ["full", "cli"]
+cli = ["dep:clap", "dep:env_logger"]
+rust-ast = ["dep:syn", "dep:quote", "dep:proc-macro2"]
+syntax-rust-functional = ["rust-ast"]
+import-rust-mutants = ["rust-ast"]
+full = ["syntax-rust-functional", "import-rust-mutants"]
+
+[dev-dependencies]
+insta = "1.41.1"
 
 [[bin]]
 name = "marauders"
 path = "src/cli.rs"
+required-features = ["cli", "full"]
 
 [[bin]]
 name = "marauders-import-rust-mutants"
 path = "src/import_rust_mutants_cli.rs"
+required-features = ["cli", "full"]
 
 [lib]
 name = "marauders"

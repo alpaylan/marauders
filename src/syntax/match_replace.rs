@@ -236,7 +236,12 @@ fn apply_variant_in_match_replace(
                 .find(|(_, variant)| variant.name == variant_name)
                 .map(|(idx, _)| (variation, idx))
         })
-        .ok_or_else(|| anyhow!("variant '{}' not found in match-replace document", variant_name))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "variant '{}' not found in match-replace document",
+                variant_name
+            )
+        })?;
 
     let (scope_path, start_line, _end_line) = parse_scope_components(&variation.scope)?;
     let source_path = PathBuf::from(scope_path);
@@ -313,7 +318,11 @@ fn locate_variation_region(
             continue;
         }
         if source_lines[preferred_start..preferred_start + alternative.len()] == alternative[..] {
-            return Some((preferred_start, preferred_start + alternative.len(), alt_idx));
+            return Some((
+                preferred_start,
+                preferred_start + alternative.len(),
+                alt_idx,
+            ));
         }
     }
 
@@ -371,7 +380,11 @@ fn render_comment_variation_block(
     let mut block = Vec::new();
     let title = render_variation_title(name, tags);
 
-    block.push(format!("{}{}", indentation, language.variation_begin(&title)));
+    block.push(format!(
+        "{}{}",
+        indentation,
+        language.variation_begin(&title)
+    ));
     block.extend_from_slice(base_lines);
     for (variant_name, replacement_lines) in variants {
         block.push(format!(
@@ -431,7 +444,10 @@ fn parse_scope_components(scope: &str) -> anyhow::Result<(String, usize, usize)>
             let line = parse_scope_number(line, scope)?;
             Ok(((*path).to_string(), line, line))
         }
-        _ => bail!("invalid scope '{}': expected path:line or path:line:col", scope),
+        _ => bail!(
+            "invalid scope '{}': expected path:line or path:line:col",
+            scope
+        ),
     }
 }
 
@@ -502,7 +518,10 @@ fn split_lines_preserving_tail(input: &str) -> (Vec<String>, bool) {
         return (Vec::new(), false);
     }
     let trailing_newline = input.ends_with('\n');
-    let mut lines = input.split('\n').map(|line| line.to_string()).collect::<Vec<_>>();
+    let mut lines = input
+        .split('\n')
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
     if trailing_newline {
         lines.pop();
     }
@@ -557,7 +576,8 @@ fn calc(a: i32, b: i32) -> i32 {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .subsec_nanos();
-        let source_path = std::env::temp_dir().join(format!("marauders_match_replace_source_{pid}_{nanos}.rs"));
+        let source_path =
+            std::env::temp_dir().join(format!("marauders_match_replace_source_{pid}_{nanos}.rs"));
         let scope_path = source_path.to_string_lossy().to_string();
 
         let match_replace = render_match_replace_code_from_comment(&spans, &scope_path).unwrap();
@@ -582,7 +602,8 @@ fn calc(a: i32, b: i32) -> i32 {
         }
         std::fs::write(&source_path, base).unwrap();
 
-        let (output_path, roundtrip) = render_comment_code_from_match_replace(&match_replace).unwrap();
+        let (output_path, roundtrip) =
+            render_comment_code_from_match_replace(&match_replace).unwrap();
         assert_eq!(output_path, source_path);
         assert!(roundtrip.contains("fn calc(a: i32, b: i32) -> i32 {"));
         assert!(roundtrip.contains("/*| add [arith] */"));
@@ -612,8 +633,9 @@ fn calc(a: i32, b: i32) -> i32 {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .subsec_nanos();
-        let source_path = std::env::temp_dir()
-            .join(format!("marauders_match_replace_set_unset_source_{pid}_{nanos}.rs"));
+        let source_path = std::env::temp_dir().join(format!(
+            "marauders_match_replace_set_unset_source_{pid}_{nanos}.rs"
+        ));
         let scope_path = source_path.to_string_lossy().to_string();
 
         let match_replace = render_match_replace_code_from_comment(&spans, &scope_path).unwrap();
