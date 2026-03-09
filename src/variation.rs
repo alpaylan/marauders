@@ -118,10 +118,7 @@ impl VariantBody {
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        match self {
-            VariantBody::Active { .. } => true,
-            _ => false,
-        }
+        matches!(self, VariantBody::Active { .. })
     }
 }
 
@@ -171,8 +168,8 @@ impl Variation {
 
 impl Display for Variation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = if self.name.is_some() {
-            self.name.as_ref().unwrap()
+        let name = if let Some(name) = &self.name {
+            name
         } else {
             "anonymous"
         };

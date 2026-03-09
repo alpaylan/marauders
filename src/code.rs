@@ -94,8 +94,8 @@ impl Display for Code {
                         content.push('\n');
                     }
 
-                    for (i, variant) in v.variants.iter().enumerate() {
-                        let indentation = variant.indentation().unwrap_or(v.indentation.clone());
+                    for variant in v.variants.iter() {
+                        let _indentation = variant.indentation().unwrap_or(v.indentation.clone());
                         content.push_str(&v.indentation);
                         content.push_str(&self.language.variant_header_begin());
                         content.push(' ');
@@ -206,7 +206,7 @@ impl Code {
     }
 
     pub(crate) fn detect_language(filepath: &str) -> Language {
-        let ext = filepath.split('.').last().unwrap().to_string();
+        let ext = filepath.split('.').next_back().unwrap().to_string();
         // todo: add support for custom languages
         Language::extension_to_language(&ext, &vec![]).unwrap()
     }

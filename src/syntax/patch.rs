@@ -488,13 +488,9 @@ fn parse_patch_replacement(
             continue;
         }
 
-        if line.starts_with('+') && !line.starts_with("+++") {
+        if (line.starts_with('+') && !line.starts_with("+++")) || line.starts_with(' ') {
             replacement.push(line[1..].to_string());
-        } else if line.starts_with(' ') {
-            replacement.push(line[1..].to_string());
-        } else if line.starts_with('-') {
-            continue;
-        } else if line.starts_with('\\') {
+        } else if line.starts_with('-') || line.starts_with('\\') {
             continue;
         } else if line.starts_with("@@ ") {
             bail!("multiple hunks are not supported in patch conversion");

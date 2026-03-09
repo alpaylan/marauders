@@ -20,6 +20,7 @@ pub struct Project {
     pub root: PathBuf,
     pub files: Vec<ProjectFile>,
     pub config: Option<ProjectConfig>,
+    pub parse_errors: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -54,7 +55,7 @@ impl Default for ProjectConfig {
 
 impl Project {
     pub fn new(path: &Path, pattern: Option<&str>) -> anyhow::Result<Self> {
-        let cfg = if let Some(cfg_path) = std::env::var("MARAUDER_CONFIG").ok() {
+        let cfg = if let Ok(cfg_path) = std::env::var("MARAUDER_CONFIG") {
             fs::read_to_string(cfg_path).ok()
         } else {
             fs::read_to_string(path.join("marauder.toml")).ok()
@@ -84,6 +85,7 @@ impl Project {
 
         let walk = WalkBuilder::new(path).overrides(overrides.build()?).build();
 
+        let mut parse_errors = Vec::new();
         let files = walk
             .filter_map(|entry| {
                 let entry = entry.unwrap();
@@ -102,11 +104,13 @@ impl Project {
                         code,
                     }),
                     Err(err) => {
-                        log::warn!(
+                        let message = format!(
                             "could not read file '{}': {}",
                             entry.path().to_string_lossy(),
                             err
                         );
+                        log::warn!("{message}");
+                        parse_errors.push(message);
                         None
                     }
                 }
@@ -117,6 +121,7 @@ impl Project {
             root,
             files,
             config: None,
+            parse_errors,
         })
     }
 
@@ -144,35 +149,37 @@ impl Project {
             .overrides(overrides.build()?)
             .build();
 
-        let files = walk
-            .filter_map(|entry| {
-                let entry = entry.unwrap();
-                if entry.file_type().unwrap().is_dir() {
-                    return None;
+        let mut files = Vec::new();
+        let mut parse_errors = Vec::new();
+        for entry in walk {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                continue;
+            }
+            log::trace!("found file: {}", entry.path().to_string_lossy());
+            let code = Code::from_file(entry.path(), &config.custom_languages);
+            match code {
+                Ok(code) => files.push(ProjectFile {
+                    path: entry.path().to_path_buf(),
+                    code,
+                }),
+                Err(err) => {
+                    let message = format!(
+                        "could not read file '{}': {}",
+                        entry.path().to_string_lossy(),
+                        err
+                    );
+                    log::error!("{message}");
+                    parse_errors.push(message);
                 }
-                log::trace!("found file: {}", entry.path().to_string_lossy());
-                let code = Code::from_file(entry.path(), &config.custom_languages);
-                match code {
-                    Ok(code) => Some(ProjectFile {
-                        path: entry.path().to_path_buf(),
-                        code,
-                    }),
-                    Err(err) => {
-                        log::error!(
-                            "could not read file '{}': {}",
-                            entry.path().to_string_lossy(),
-                            err
-                        );
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<ProjectFile>>();
+            }
+        }
 
         Ok(Project {
             root,
             files,
             config: Some(config),
+            parse_errors,
         })
     }
 

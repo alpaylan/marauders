@@ -1,8 +1,5 @@
-use std::collections::HashMap;
 use std::ops::Range;
 
-use pest::Parser as _;
-use pest_derive::Parser;
 use quote::ToTokens;
 use syn::parse_quote;
 use syn::spanned::Spanned;
@@ -13,56 +10,6 @@ use crate::variation::{Variant, Variation};
 use crate::VariantBody;
 
 const RUST_MUTATION_ENV_PREFIX: &str = "M_";
-
-/// Functional Mutations are AST-level mutations that reduce the requirement for multiple-compilations.
-/// This module implements functional mutations for a toy-lisp.
-
-#[derive(Debug, Clone, PartialEq)]
-enum AST {
-    // (define symbol expression)
-    Define(String, Box<AST>),
-    // (lambda (args) body)
-    Lambda(Vec<String>, Box<AST>),
-    // (if condition then else)
-    If(Box<AST>, Box<AST>, Box<AST>),
-    // (begin expr1 expr2 ... exprN)
-    Begin(Vec<AST>),
-    // Atoms
-    Symbol(String),
-    Number(i64),
-    String(String),
-    Boolean(bool),
-    // (f expr1 ... exprN)
-    Call(String, Vec<AST>),
-    // (expr1 expr2 ... exprN)
-    Apply(Vec<AST>),
-    // (mutate expr1 expr2 ... exprN)
-    Mutate(Option<String>, Vec<(String, AST)>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Builtin {
-    Sum,
-    Minus,
-    Mult,
-    And,
-    Or,
-    Not,
-    Eq,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Value {
-    Number(i64),
-    Boolean(bool),
-    String(String),
-    Function(Vec<String>, Box<AST>),
-    Builtin(Builtin),
-}
-
-#[derive(Parser)]
-#[grammar = "syntax/functional.pest"]
-struct LispParser;
 
 pub(crate) fn looks_like_rust_mutations(input: &str) -> bool {
     input.contains(r#"std::env::var("M_"#) || input.contains(r#"env::var("M_"#)
@@ -298,121 +245,6 @@ fn parse_rust_variations_ast(input: &str) -> Vec<Span> {
     visitor.into_spans()
 }
 
-fn parse_rust_variations_legacy(input: &str) -> Vec<Span> {
-    let mut spans = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(rel_idx) = input[cursor..].find("match") {
-        let match_idx = cursor + rel_idx;
-        cursor = match_idx + "match".len();
-
-        if !is_word_boundary(input, match_idx, "match".len()) {
-            continue;
-        }
-
-        let Some(open_brace_idx) = input[cursor..].find('{').map(|idx| cursor + idx) else {
-            break;
-        };
-
-        let header = &input[cursor..open_brace_idx];
-        let Some((variation_name, var_idx_in_header)) = parse_env_var_name(header) else {
-            cursor = open_brace_idx + 1;
-            continue;
-        };
-
-        let Some(close_brace_idx) = find_matching_brace(input, open_brace_idx) else {
-            break;
-        };
-
-        let body = &input[open_brace_idx + 1..close_brace_idx];
-        let variants = extract_ok_variants(body)
-            .into_iter()
-            .map(|name| Variant {
-                name,
-                body: VariantBody::InactiveMultiLine {
-                    lines: vec![],
-                    indentation: String::new(),
-                },
-            })
-            .collect::<Vec<_>>();
-
-        if !variants.is_empty() {
-            let base = Variant {
-                name: "base".to_string(),
-                body: VariantBody::InactiveMultiLine {
-                    lines: vec![],
-                    indentation: String::new(),
-                },
-            };
-
-            let variation = Variation {
-                name: Some(variation_name),
-                tags: vec![],
-                base,
-                variants,
-                active: 0,
-                indentation: String::new(),
-            };
-
-            let line = line_from_index(input, cursor + var_idx_in_header);
-            spans.push(Span::variation(variation, line));
-        }
-
-        cursor = close_brace_idx + 1;
-    }
-
-    for (line, variation_name, variant_name) in extract_guard_variants(input) {
-        if let Some(span) = spans.iter_mut().find(|span| match &span.content {
-            crate::code::SpanContent::Variation(v) => v.name.as_deref() == Some(&variation_name),
-            _ => false,
-        }) {
-            if let crate::code::SpanContent::Variation(v) = &mut span.content {
-                if !v
-                    .variants
-                    .iter()
-                    .any(|variant| variant.name == variant_name)
-                {
-                    v.variants.push(Variant {
-                        name: variant_name,
-                        body: VariantBody::InactiveMultiLine {
-                            lines: vec![],
-                            indentation: String::new(),
-                        },
-                    });
-                }
-            }
-        } else {
-            let base = Variant {
-                name: "base".to_string(),
-                body: VariantBody::InactiveMultiLine {
-                    lines: vec![],
-                    indentation: String::new(),
-                },
-            };
-
-            let variation = Variation {
-                name: Some(variation_name),
-                tags: vec![],
-                base,
-                variants: vec![Variant {
-                    name: variant_name,
-                    body: VariantBody::InactiveMultiLine {
-                        lines: vec![],
-                        indentation: String::new(),
-                    },
-                }],
-                active: 0,
-                indentation: String::new(),
-            };
-
-            spans.push(Span::variation(variation, line));
-        }
-    }
-
-    spans.sort_by_key(|span| span.line);
-    spans
-}
-
 struct RustMutationVisitor<'a> {
     _source: &'a str,
     data: Vec<VariationData>,
@@ -543,50 +375,74 @@ impl<'ast> Visit<'ast> for RustMutationVisitor<'_> {
 }
 
 pub(crate) fn render_rust_functional_code(input: &str, spans: &[Span]) -> anyhow::Result<String> {
-    let file = syn::parse_file(input)
-        .map_err(|err| anyhow::anyhow!("failed to parse Rust comment source: {err}"))?;
-    let index = SourceIndex::new(input);
-    let candidates = collect_rust_node_candidates(&file, &index);
-    let locations = collect_variation_locations(input, spans, &index)?;
-
+    let mut rendered = input.to_string();
+    let mut current_spans = spans.to_vec();
     let mut anonymous_count = 0usize;
-    let mut replacements = Vec::new();
 
-    for location in locations {
-        anonymous_count += 1;
-        let direct = render_rust_functional_variation(&location.variation, anonymous_count);
-        if replacement_keeps_file_parseable(input, location.block_range.clone(), &direct) {
+    loop {
+        let file = syn::parse_file(&rendered)
+            .map_err(|err| anyhow::anyhow!("failed to parse Rust comment source: {err}"))?;
+        let index = SourceIndex::new(&rendered);
+        let candidates = collect_rust_node_candidates(&file, &index);
+        let locations = collect_variation_locations(&rendered, &current_spans, &index)?;
+        if locations.is_empty() {
+            return Ok(rendered);
+        }
+
+        let mut replacements = Vec::new();
+        for location in locations {
+            if variation_is_inert_marker(&location.variation) {
+                continue;
+            }
+            anonymous_count += 1;
+            let direct = render_rust_functional_variation(&location.variation, anonymous_count);
+            if replacement_keeps_file_parseable(&rendered, location.block_range.clone(), &direct) {
+                replacements.push(TextReplacement {
+                    range: location.block_range,
+                    replacement: direct,
+                });
+                continue;
+            }
+
+            let Some(lifted) = lift_variation_to_node(&rendered, &location, &candidates) else {
+                return Err(anyhow::anyhow!(
+                    "could not find a valid enclosing Rust node for variation at line {}",
+                    location.line
+                ));
+            };
+
+            let lifted_rendered =
+                render_rust_functional_variation(&lifted.variation, anonymous_count);
+            if !replacement_keeps_file_parseable(&rendered, lifted.range.clone(), &lifted_rendered)
+            {
+                return Err(anyhow::anyhow!(
+                    "lifted variation at line {} still does not produce valid Rust syntax (range {:?})",
+                    location.line,
+                    lifted.range
+                ));
+            }
+
             replacements.push(TextReplacement {
-                range: location.block_range,
-                replacement: direct,
+                range: lifted.range,
+                replacement: lifted_rendered,
             });
-            continue;
         }
 
-        let Some(lifted) = lift_variation_to_node(input, &location, &candidates) else {
-            return Err(anyhow::anyhow!(
-                "could not find a valid enclosing Rust node for variation at line {}",
-                location.line
-            ));
-        };
+        if replacements.is_empty() {
+            return Ok(rendered);
+        }
 
-        let rendered = render_rust_functional_variation(&lifted.variation, anonymous_count);
-        if !replacement_keeps_file_parseable(input, lifted.range.clone(), &rendered) {
+        let selected = select_non_overlapping_replacements(replacements);
+        if selected.is_empty() {
             return Err(anyhow::anyhow!(
-                "lifted variation at line {} still does not produce valid Rust syntax",
-                location.line
+                "no non-overlapping Rust mutation replacements could be applied during conversion"
             ));
         }
 
-        replacements.push(TextReplacement {
-            range: lifted.range,
-            replacement: rendered,
-        });
+        rendered = apply_replacements(&rendered, selected)
+            .ok_or_else(|| anyhow::anyhow!("failed to apply Rust functional replacements"))?;
+        current_spans = crate::syntax::comment::parse_code(&rendered)?;
     }
-
-    ensure_non_overlapping_replacements(&replacements)?;
-    apply_replacements(input, replacements)
-        .ok_or_else(|| anyhow::anyhow!("failed to apply Rust functional replacements"))
 }
 
 pub(crate) fn render_rust_comment_code_from_functional(input: &str) -> anyhow::Result<String> {
@@ -601,36 +457,6 @@ fn render_rust_comment_code_from_functional_ast(input: &str) -> anyhow::Result<S
     let mut visitor = RustFunctionalToCommentVisitor::new(input, &index);
     visitor.visit_file(&file);
     Ok(apply_replacements(input, visitor.replacements).unwrap_or_else(|| input.to_string()))
-}
-
-fn render_rust_comment_code_from_functional_legacy(input: &str) -> String {
-    let lines = input.lines().map(ToString::to_string).collect::<Vec<_>>();
-    let trailing_newline = input.ends_with('\n');
-    let mut out = Vec::new();
-    let mut cursor = 0usize;
-
-    while cursor < lines.len() {
-        if let Some((next_cursor, variation)) = parse_expr_match_block(&lines, cursor) {
-            out.extend(render_comment_variation_block(&variation));
-            cursor = next_cursor;
-            continue;
-        }
-
-        if let Some((next_cursor, variation)) = parse_guard_arm_group(&lines, cursor) {
-            out.extend(render_comment_variation_block(&variation));
-            cursor = next_cursor;
-            continue;
-        }
-
-        out.push(lines[cursor].clone());
-        cursor += 1;
-    }
-
-    let mut rendered = out.join("\n");
-    if trailing_newline {
-        rendered.push('\n');
-    }
-    rendered
 }
 
 #[derive(Debug)]
@@ -947,7 +773,7 @@ fn collect_variation_locations(
     index: &SourceIndex,
 ) -> anyhow::Result<Vec<VariationLocation>> {
     let mut locations = Vec::new();
-    for (idx, span) in spans.iter().enumerate() {
+    for span in spans {
         let crate::code::SpanContent::Variation(variation) = &span.content else {
             continue;
         };
@@ -959,16 +785,22 @@ fn collect_variation_locations(
             )
         })?;
 
-        let end = if let Some(next_span) = spans.get(idx + 1) {
-            index.line_start_offset(next_span.line).ok_or_else(|| {
+        let block_end_line =
+            find_rust_comment_variation_end_line(index, span.line).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "invalid variation end line {} for Rust conversion",
-                    next_span.line
+                    "could not find Rust variation terminator for variation at line {}",
+                    span.line
                 )
-            })?
-        } else {
-            input.len()
-        };
+            })?;
+        let mut end = index.line_end_offset(block_end_line).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid variation end line {} for Rust conversion",
+                block_end_line
+            )
+        })?;
+        if input.as_bytes().get(end) == Some(&b'\n') {
+            end += 1;
+        }
 
         if start >= end || end > input.len() {
             return Err(anyhow::anyhow!(
@@ -978,32 +810,36 @@ fn collect_variation_locations(
         }
 
         let base_lines = variation.base.lines();
-        if base_lines.is_empty() {
-            return Err(anyhow::anyhow!(
-                "variation at line {} has an empty base body",
-                span.line
-            ));
-        }
-        let base_start_line = span.line + 1;
-        let base_end_line = base_start_line + base_lines.len() - 1;
-        let base_start = index.line_start_offset(base_start_line).ok_or_else(|| {
-            anyhow::anyhow!(
-                "invalid base start line {} for Rust conversion",
-                base_start_line
-            )
-        })?;
-        let base_end = index.line_end_offset(base_end_line).ok_or_else(|| {
-            anyhow::anyhow!(
-                "invalid base end line {} for Rust conversion",
-                base_end_line
-            )
-        })?;
-        if base_start > base_end || base_end > input.len() {
-            return Err(anyhow::anyhow!(
-                "invalid base byte range for Rust conversion at line {}",
-                span.line
-            ));
-        }
+        let (base_start, base_end) = if base_lines.is_empty() {
+            (start, start)
+        } else {
+            let base_start_line = span.line + 1;
+            let base_end_line = base_start_line + base_lines.len() - 1;
+            let (base_code_start_line, base_code_end_line) =
+                base_code_line_bounds(index, base_start_line, base_end_line)
+                    .unwrap_or((base_start_line, base_end_line));
+            let base_start = index
+                .line_start_offset(base_code_start_line)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "invalid base start line {} for Rust conversion",
+                        base_code_start_line
+                    )
+                })?;
+            let base_end = index.line_end_offset(base_code_end_line).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid base end line {} for Rust conversion",
+                    base_code_end_line
+                )
+            })?;
+            if base_start > base_end || base_end > input.len() {
+                return Err(anyhow::anyhow!(
+                    "invalid base byte range for Rust conversion at line {}",
+                    span.line
+                ));
+            }
+            (base_start, base_end)
+        };
 
         locations.push(VariationLocation {
             line: span.line,
@@ -1014,6 +850,70 @@ fn collect_variation_locations(
     }
 
     Ok(locations)
+}
+
+fn find_rust_comment_variation_end_line(index: &SourceIndex, start_line: usize) -> Option<usize> {
+    let mut line = start_line + 1;
+    loop {
+        let text = index.line_text(line)?;
+        if text.trim() == "/* |*/" {
+            return Some(line);
+        }
+        line += 1;
+    }
+}
+
+fn variation_is_inert_marker(variation: &Variation) -> bool {
+    variation
+        .base
+        .lines()
+        .iter()
+        .all(|line| line.trim().is_empty())
+        && variation
+            .variants
+            .iter()
+            .all(|variant| variant.lines().iter().all(|line| line.trim().is_empty()))
+}
+
+fn base_code_line_bounds(
+    index: &SourceIndex,
+    start_line: usize,
+    end_line: usize,
+) -> Option<(usize, usize)> {
+    if start_line > end_line {
+        return None;
+    }
+
+    let mut first = None;
+    for line in start_line..=end_line {
+        let text = index.line_text(line)?;
+        if !is_non_code_rust_comment_line(text) {
+            first = Some(line);
+            break;
+        }
+    }
+
+    let first = first?;
+    let mut last = first;
+    for line in (first..=end_line).rev() {
+        let text = index.line_text(line)?;
+        if !is_non_code_rust_comment_line(text) {
+            last = line;
+            break;
+        }
+    }
+
+    Some((first, last))
+}
+
+fn is_non_code_rust_comment_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed == "/*"
+        || trimmed == "*/"
+        || (trimmed.starts_with("/*") && trimmed.ends_with("*/"))
+        || trimmed.starts_with('*')
 }
 
 fn replacement_keeps_file_parseable(input: &str, range: Range<usize>, replacement: &str) -> bool {
@@ -1030,22 +930,27 @@ fn replacement_keeps_file_parseable(input: &str, range: Range<usize>, replacemen
         .is_some()
 }
 
-fn ensure_non_overlapping_replacements(replacements: &[TextReplacement]) -> anyhow::Result<()> {
-    let mut sorted = replacements
-        .iter()
-        .map(|replacement| replacement.range.clone())
-        .collect::<Vec<_>>();
-    sorted.sort_by_key(|range| range.start);
+fn select_non_overlapping_replacements(replacements: Vec<TextReplacement>) -> Vec<TextReplacement> {
+    let mut sorted = replacements;
+    sorted.sort_by(|left, right| {
+        let left_len = left.range.end.saturating_sub(left.range.start);
+        let right_len = right.range.end.saturating_sub(right.range.start);
+        left_len
+            .cmp(&right_len)
+            .then_with(|| left.range.start.cmp(&right.range.start))
+    });
 
-    for pair in sorted.windows(2) {
-        if pair[0].end > pair[1].start {
-            return Err(anyhow::anyhow!(
-                "overlapping Rust mutation replacements detected during conversion"
-            ));
+    let mut selected = Vec::new();
+    for replacement in sorted {
+        if selected.iter().any(|kept: &TextReplacement| {
+            replacement.range.start < kept.range.end && replacement.range.end > kept.range.start
+        }) {
+            continue;
         }
+        selected.push(replacement);
     }
 
-    Ok(())
+    selected
 }
 
 fn lines_from_text(text: &str) -> Vec<String> {
@@ -1155,6 +1060,12 @@ fn lift_variation_to_node(
 
         let replacement_range = std::cmp::min(location.block_range.start, candidate.range.start)
             ..std::cmp::max(location.block_range.end, candidate.range.end);
+
+        let candidate_rendered = render_rust_functional_variation(&variation, 0);
+        if !replacement_keeps_file_parseable(input, replacement_range.clone(), &candidate_rendered)
+        {
+            continue;
+        }
 
         return Some(LiftedVariation {
             range: replacement_range,
@@ -1369,17 +1280,16 @@ impl<'a> RustFunctionalToCommentVisitor<'a> {
             if !arm_data
                 .iter()
                 .any(|arm| matches!(arm.kind, GuardArmKind::Base))
+                && cursor < node.arms.len()
             {
-                if cursor < node.arms.len() {
-                    if let Some(base_arm) = parse_base_guard_arm_from_ast(
-                        &node.arms[cursor],
-                        self.source,
-                        self.index,
-                        variation_name.clone(),
-                    ) {
-                        arm_data.push(base_arm);
-                        cursor += 1;
-                    }
+                if let Some(base_arm) = parse_base_guard_arm_from_ast(
+                    &node.arms[cursor],
+                    self.source,
+                    self.index,
+                    variation_name.clone(),
+                ) {
+                    arm_data.push(base_arm);
+                    cursor += 1;
                 }
             }
 
@@ -1615,7 +1525,9 @@ fn guard_arm_variation_hint(arm: &GuardArmFromAst) -> Option<String> {
     }
 
     match &arm.kind {
-        GuardArmKind::Variant(name) => infer_variation_name_from_variants(&[name.clone()]),
+        GuardArmKind::Variant(name) => {
+            infer_variation_name_from_variants(std::slice::from_ref(name))
+        }
         GuardArmKind::Base => None,
     }
 }
@@ -1806,268 +1718,10 @@ struct ParsedVariationBlock {
     variants: Vec<(String, Vec<String>)>,
 }
 
-fn parse_expr_match_block(lines: &[String], start: usize) -> Option<(usize, ParsedVariationBlock)> {
-    let line = lines.get(start)?;
-    let trimmed = line.trim();
-    if !trimmed.starts_with("match ") {
-        return None;
-    }
-
-    if trimmed.starts_with("match ()") && trimmed.ends_with('{') {
-        return parse_match_unit_block(lines, start);
-    }
-
-    let variation = extract_prefixed_env_name(trimmed)?;
-    if !trimmed.contains(".as_deref()") || !trimmed.ends_with('{') {
-        return None;
-    }
-
-    let indentation = leading_whitespace(line);
-    let mut cursor = start + 1;
-    let mut base_lines = None;
-    let mut variants = Vec::new();
-
-    while cursor < lines.len() {
-        let current = &lines[cursor];
-        let current_trim = current.trim();
-
-        if current_trim == "}" || current_trim == "}," {
-            let block = ParsedVariationBlock {
-                indentation,
-                name: Some(variation),
-                tags: vec![],
-                base_lines: base_lines?,
-                variants,
-            };
-            return Some((cursor + 1, block));
-        }
-
-        if current_trim.starts_with("_ =>") {
-            cursor += 1;
-            continue;
-        }
-
-        let arm_name = parse_ok_variant_name(current_trim)?;
-        let (next_cursor, body_lines) = parse_expr_match_arm(lines, cursor)?;
-        if arm_name == "base" {
-            base_lines = Some(body_lines);
-        } else {
-            variants.push((arm_name, body_lines));
-        }
-        cursor = next_cursor;
-    }
-
-    None
-}
-
-fn parse_match_unit_block(lines: &[String], start: usize) -> Option<(usize, ParsedVariationBlock)> {
-    let line = lines.get(start)?;
-    let trimmed = line.trim();
-    if !trimmed.starts_with("match ()") || !trimmed.ends_with('{') {
-        return None;
-    }
-
-    let indentation = leading_whitespace(line);
-    let mut cursor = start + 1;
-    let mut base_lines = None;
-    let mut variants: Vec<(String, Vec<String>)> = Vec::new();
-    let mut explicit_names: Vec<String> = Vec::new();
-
-    while cursor < lines.len() {
-        let current = &lines[cursor];
-        let current_trim = current.trim();
-
-        if current_trim == "}" || current_trim == "}," {
-            if variants.is_empty() {
-                return None;
-            }
-            let variant_names = variants
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect::<Vec<_>>();
-            let name = if explicit_names.is_empty() {
-                infer_variation_name_from_variants(&variant_names)
-            } else if explicit_names.iter().all(|name| name == &explicit_names[0]) {
-                Some(explicit_names[0].clone())
-            } else {
-                None
-            };
-
-            let block = ParsedVariationBlock {
-                indentation,
-                name,
-                tags: vec![],
-                base_lines: base_lines?,
-                variants,
-            };
-            return Some((cursor + 1, block));
-        }
-
-        if current_trim.starts_with("_ =>") {
-            let (next_cursor, body_lines) = parse_expr_match_arm(lines, cursor)?;
-            base_lines = Some(body_lines);
-            cursor = next_cursor;
-            continue;
-        }
-
-        if let Some(env_name) = extract_prefixed_env_name(current_trim) {
-            let (next_cursor, body_lines) = parse_expr_match_arm(lines, cursor)?;
-            let (variation_name, variant_name) = split_mutation_env_name(&env_name);
-            if let Some(name) = variation_name {
-                explicit_names.push(name);
-            }
-            variants.push((variant_name, body_lines));
-            cursor = next_cursor;
-            continue;
-        }
-
-        cursor += 1;
-    }
-
-    None
-}
-
-fn parse_expr_match_arm(lines: &[String], start: usize) -> Option<(usize, Vec<String>)> {
-    let line = lines.get(start)?;
-    let arrow_idx = line.find("=>")?;
-    let suffix = &line[arrow_idx..];
-    if !suffix.contains('{') {
-        return None;
-    }
-
-    let mut cursor = start;
-    let mut depth = brace_delta(suffix);
-    let mut body = Vec::new();
-    cursor += 1;
-
-    while cursor < lines.len() {
-        let current = &lines[cursor];
-        let delta = brace_delta(current);
-        depth += delta;
-        if depth == 0 {
-            return Some((cursor + 1, body));
-        }
-
-        body.push(strip_leading_columns(current, 8));
-
-        cursor += 1;
-    }
-
-    None
-}
-
-fn parse_guard_arm_group(lines: &[String], start: usize) -> Option<(usize, ParsedVariationBlock)> {
-    let (_first_kind, first_name, indentation, _normalized) =
-        parse_guard_arm_header(lines.get(start)?)?;
-    let mut cursor = start;
-    let variation_name = first_name;
-    let mut base = None;
-    let mut variants = Vec::new();
-
-    while cursor < lines.len() {
-        let (kind, name, arm_indent, normalized_first) =
-            match parse_guard_arm_header(&lines[cursor]) {
-                Some(data) => data,
-                None => break,
-            };
-        if arm_indent != indentation || name != variation_name {
-            break;
-        }
-
-        let (next_cursor, arm_lines) = parse_guard_arm(lines, cursor, &normalized_first)?;
-        match kind {
-            GuardArmKind::Base => base = Some(arm_lines),
-            GuardArmKind::Variant(variant) => variants.push((variant, arm_lines)),
-        }
-        cursor = next_cursor;
-    }
-
-    let block = ParsedVariationBlock {
-        indentation,
-        name: Some(variation_name),
-        tags: vec![],
-        base_lines: base?,
-        variants,
-    };
-    Some((cursor, block))
-}
-
 #[derive(Debug, Clone)]
 enum GuardArmKind {
     Base,
     Variant(String),
-}
-
-fn parse_guard_arm_header(line: &str) -> Option<(GuardArmKind, String, String, String)> {
-    let if_idx = line.find("if matches!(")?;
-    let arrow_idx = line.find("=>")?;
-    let variation_name = extract_prefixed_env_name(line)?;
-    let arm_kind =
-        if line.contains(r#"Ok("base") | Err(_)"#) || line.contains(r#"Err(_) | Ok("base")"#) {
-            GuardArmKind::Base
-        } else {
-            GuardArmKind::Variant(parse_ok_variant_name(line)?)
-        };
-    let indentation = leading_whitespace(line);
-    let prefix = line[..if_idx].trim_end();
-    let suffix = line[arrow_idx..].trim_start();
-    let normalized = format!("{prefix} {suffix}");
-    Some((arm_kind, variation_name, indentation, normalized))
-}
-
-fn parse_guard_arm(
-    lines: &[String],
-    start: usize,
-    normalized_first: &str,
-) -> Option<(usize, Vec<String>)> {
-    let mut out = Vec::new();
-    out.push(normalized_first.to_string());
-
-    let first = lines.get(start)?;
-    let arrow_idx = first.find("=>")?;
-    let suffix = &first[arrow_idx..];
-    let mut depth = brace_delta(suffix);
-    if depth == 0 {
-        return Some((start + 1, out));
-    }
-    let mut cursor = start + 1;
-
-    while cursor < lines.len() {
-        let current = &lines[cursor];
-        out.push(current.clone());
-        depth += brace_delta(current);
-        if depth == 0 {
-            return Some((cursor + 1, out));
-        }
-        cursor += 1;
-    }
-
-    None
-}
-
-fn strip_leading_columns(input: &str, columns: usize) -> String {
-    let mut taken = 0usize;
-    let mut byte_idx = 0usize;
-    let mut stopped = false;
-    for (idx, ch) in input.char_indices() {
-        if taken < columns && (ch == ' ' || ch == '\t') {
-            taken += 1;
-            byte_idx = idx + ch.len_utf8();
-            continue;
-        }
-        byte_idx = idx;
-        stopped = true;
-        break;
-    }
-    if taken < columns {
-        input.to_string()
-    } else {
-        if !stopped {
-            String::new()
-        } else {
-            input[byte_idx..].to_string()
-        }
-    }
 }
 
 fn render_comment_variation_block(block: &ParsedVariationBlock) -> Vec<String> {
@@ -2109,51 +1763,8 @@ fn render_comment_variation_title(name: Option<&str>, tags: &[String]) -> String
     title
 }
 
-fn parse_ok_variant_name(input: &str) -> Option<String> {
-    let ok_idx = input.find(r#"Ok(""#)?;
-    let start = ok_idx + 4;
-    let rest = &input[start..];
-    let end_rel = rest.find('"')?;
-    Some(rest[..end_rel].to_string())
-}
-
-fn extract_prefixed_env_name(input: &str) -> Option<String> {
-    let marker = format!(r#""{RUST_MUTATION_ENV_PREFIX}"#);
-    let idx = input.find(&marker)?;
-    let start = idx + marker.len();
-    let rest = &input[start..];
-    let end_rel = rest.find('"')?;
-    Some(rest[..end_rel].to_string())
-}
-
 fn leading_whitespace(input: &str) -> String {
     input.chars().take_while(|c| c.is_whitespace()).collect()
-}
-
-fn brace_delta(input: &str) -> i32 {
-    let mut delta = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    for ch in input.chars() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        match ch {
-            '"' => in_string = true,
-            '{' => delta += 1,
-            '}' => delta -= 1,
-            _ => {}
-        }
-    }
-    delta
 }
 
 fn render_rust_functional_variation(variation: &Variation, anonymous_idx: usize) -> String {
@@ -2399,11 +2010,11 @@ fn collect_variants_from_pat(pat: &syn::Pat, out: &mut Vec<String>) {
         }
         syn::Pat::TupleStruct(tuple_struct) => {
             if tuple_struct.path.is_ident("Ok") {
-                if let Some(first) = tuple_struct.elems.first() {
-                    if let syn::Pat::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(name),
-                        ..
-                    }) = first
+                if let Some(syn::Pat::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(name),
+                    ..
+                })) = tuple_struct.elems.first()
+                {
                     {
                         out.push(name.value());
                     }
@@ -2570,25 +2181,9 @@ fn extract_variants_from_match_arm_guards(
 }
 
 fn mutation_variation_hint(mutation: &GuardMutation) -> Option<String> {
-    mutation
-        .variation_name
-        .clone()
-        .or_else(|| infer_variation_name_from_variants(&[mutation.variant_name.clone()]))
-}
-
-fn extract_variation_from_matches_macro(mac: &syn::Macro) -> Option<(String, Vec<String>)> {
-    if !mac.path.is_ident("matches") {
-        return None;
-    }
-
-    let Ok(args) = syn::parse2::<MatchesArgs>(mac.tokens.clone()) else {
-        return None;
-    };
-
-    let variation_name = extract_variation_from_expr(&args.expr)?;
-    let mut variants = Vec::new();
-    collect_variants_from_pat(&args.pat, &mut variants);
-    Some((variation_name, variants))
+    mutation.variation_name.clone().or_else(|| {
+        infer_variation_name_from_variants(std::slice::from_ref(&mutation.variant_name))
+    })
 }
 
 struct MatchesArgs {
@@ -2604,588 +2199,6 @@ impl syn::parse::Parse for MatchesArgs {
             _comma: input.parse()?,
             pat: syn::Pat::parse_multi(input)?,
         })
-    }
-}
-
-fn parse_env_var_name(input: &str) -> Option<(String, usize)> {
-    const NEEDLES: [&str; 2] = ["std::env::var", "env::var"];
-    let mut search_from = 0;
-
-    while search_from < input.len() {
-        let mut found: Option<(usize, &str)> = None;
-
-        for needle in NEEDLES {
-            if let Some(rel_idx) = input[search_from..].find(needle) {
-                let idx = search_from + rel_idx;
-                match found {
-                    Some((best_idx, _)) if idx >= best_idx => {}
-                    _ => found = Some((idx, needle)),
-                }
-            }
-        }
-
-        let (idx, needle) = found?;
-        search_from = idx + needle.len();
-
-        if !is_word_boundary(input, idx, needle.len()) {
-            continue;
-        }
-
-        let mut cursor = idx + needle.len();
-        skip_whitespace(input, &mut cursor);
-        if input.as_bytes().get(cursor) != Some(&b'(') {
-            continue;
-        }
-
-        cursor += 1;
-        skip_whitespace(input, &mut cursor);
-        if input.as_bytes().get(cursor) != Some(&b'"') {
-            continue;
-        }
-
-        if let Some((name, _next)) = parse_quoted_string(input, cursor) {
-            if let Some(name) = strip_env_prefix(name) {
-                return Some((name, idx));
-            }
-        }
-    }
-
-    None
-}
-
-fn find_env_var_calls(input: &str) -> Vec<(usize, String)> {
-    const NEEDLES: [&str; 2] = ["std::env::var", "env::var"];
-    let mut calls = Vec::new();
-    let mut search_from = 0;
-
-    while search_from < input.len() {
-        let mut found: Option<(usize, &str)> = None;
-
-        for needle in NEEDLES {
-            if let Some(rel_idx) = input[search_from..].find(needle) {
-                let idx = search_from + rel_idx;
-                match found {
-                    Some((best_idx, _)) if idx >= best_idx => {}
-                    _ => found = Some((idx, needle)),
-                }
-            }
-        }
-
-        let Some((idx, needle)) = found else {
-            break;
-        };
-        search_from = idx + needle.len();
-
-        if !is_word_boundary(input, idx, needle.len()) {
-            continue;
-        }
-
-        let mut cursor = idx + needle.len();
-        skip_whitespace(input, &mut cursor);
-        if input.as_bytes().get(cursor) != Some(&b'(') {
-            continue;
-        }
-
-        cursor += 1;
-        skip_whitespace(input, &mut cursor);
-        if input.as_bytes().get(cursor) != Some(&b'"') {
-            continue;
-        }
-
-        if let Some((name, next)) = parse_quoted_string(input, cursor) {
-            if let Some(name) = strip_env_prefix(name) {
-                calls.push((idx, name));
-                search_from = next;
-            }
-        }
-    }
-
-    calls
-}
-
-fn extract_guard_variants(input: &str) -> Vec<(usize, String, String)> {
-    let mut result = Vec::new();
-
-    for (idx, variation_name) in find_env_var_calls(input) {
-        let end = (idx + 200).min(input.len());
-        let snippet = &input[idx..end];
-        for variant_name in extract_ok_variants(snippet) {
-            let line = line_from_index(input, idx);
-            result.push((line, variation_name.clone(), variant_name));
-        }
-    }
-
-    result
-}
-
-fn extract_ok_variants(input: &str) -> Vec<String> {
-    let mut variants = Vec::new();
-    let mut cursor = 0;
-
-    while cursor < input.len() {
-        let Some(rel_idx) = input[cursor..].find("Ok") else {
-            break;
-        };
-
-        let ok_idx = cursor + rel_idx;
-        cursor = ok_idx + "Ok".len();
-
-        if !is_word_boundary(input, ok_idx, "Ok".len()) {
-            continue;
-        }
-
-        let mut pattern_cursor = cursor;
-        skip_whitespace(input, &mut pattern_cursor);
-        if input.as_bytes().get(pattern_cursor) != Some(&b'(') {
-            continue;
-        }
-        pattern_cursor += 1;
-        skip_whitespace(input, &mut pattern_cursor);
-        if input.as_bytes().get(pattern_cursor) != Some(&b'"') {
-            continue;
-        }
-
-        let Some((name, next)) = parse_quoted_string(input, pattern_cursor) else {
-            continue;
-        };
-        cursor = next;
-
-        if name == "base" {
-            continue;
-        }
-
-        if !variants.contains(&name) {
-            variants.push(name);
-        }
-    }
-
-    variants
-}
-
-fn parse_quoted_string(input: &str, quote_idx: usize) -> Option<(String, usize)> {
-    let bytes = input.as_bytes();
-    if bytes.get(quote_idx) != Some(&b'"') {
-        return None;
-    }
-
-    let mut escaped = false;
-    let mut cursor = quote_idx + 1;
-    while cursor < bytes.len() {
-        let b = bytes[cursor];
-        if escaped {
-            escaped = false;
-            cursor += 1;
-            continue;
-        }
-
-        match b {
-            b'\\' => {
-                escaped = true;
-                cursor += 1;
-            }
-            b'"' => {
-                let content = input[quote_idx + 1..cursor].to_string();
-                return Some((content, cursor + 1));
-            }
-            _ => {
-                cursor += 1;
-            }
-        }
-    }
-
-    None
-}
-
-fn find_matching_brace(input: &str, open_brace_idx: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    if bytes.get(open_brace_idx) != Some(&b'{') {
-        return None;
-    }
-
-    let mut depth = 0usize;
-    let mut cursor = open_brace_idx;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    while cursor < bytes.len() {
-        let b = bytes[cursor];
-
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            cursor += 1;
-            continue;
-        }
-
-        match b {
-            b'"' => {
-                in_string = true;
-                cursor += 1;
-            }
-            b'{' => {
-                depth += 1;
-                cursor += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(cursor);
-                }
-                cursor += 1;
-            }
-            _ => {
-                cursor += 1;
-            }
-        }
-    }
-
-    None
-}
-
-fn is_word_boundary(input: &str, idx: usize, len: usize) -> bool {
-    let before = if idx == 0 {
-        None
-    } else {
-        input[..idx].chars().next_back()
-    };
-    let after = input[idx + len..].chars().next();
-
-    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    before.map_or(true, |c| !is_ident(c)) && after.map_or(true, |c| !is_ident(c))
-}
-
-fn skip_whitespace(input: &str, idx: &mut usize) {
-    let bytes = input.as_bytes();
-    while *idx < bytes.len() && bytes[*idx].is_ascii_whitespace() {
-        *idx += 1;
-    }
-}
-
-fn line_from_index(input: &str, idx: usize) -> usize {
-    input[..idx].bytes().filter(|b| *b == b'\n').count() + 1
-}
-
-fn parse(input: &str) -> Result<AST, Box<pest::error::Error<Rule>>> {
-    let mut pairs = LispParser::parse(Rule::program, input)?;
-    let expressions = pairs.next().unwrap().into_inner();
-
-    let mut ast = Vec::new();
-    for expr in expressions {
-        if expr.as_rule() == Rule::EOI {
-            break;
-        }
-
-        if expr.as_rule() == Rule::COMMENT {
-            continue;
-        }
-
-        ast.push(parse_expression(expr.into_inner().next().unwrap()));
-    }
-
-    Ok(AST::Begin(ast))
-}
-
-fn parse_expression(pair: pest::iterators::Pair<Rule>) -> AST {
-    match pair.as_rule() {
-        Rule::define => {
-            let mut pairs = pair.into_inner();
-            let symbol = pairs.next().unwrap().as_str().to_string();
-            let expr = Box::new(parse_expression(pairs.next().unwrap()));
-            AST::Define(symbol, expr)
-        }
-        Rule::number => {
-            let number = pair.as_str().parse().unwrap();
-            AST::Number(number)
-        }
-        Rule::symbol => {
-            let symbol = pair.as_str().to_string();
-            AST::Symbol(symbol)
-        }
-        Rule::string => {
-            let string = pair.as_str().to_string();
-            AST::String(string)
-        }
-        Rule::boolean => {
-            let boolean = pair.as_str();
-            let boolean = match boolean {
-                "#t" => true,
-                "#f" => false,
-                _ => unreachable!(),
-            };
-            AST::Boolean(boolean)
-        }
-        Rule::begin => {
-            let mut ast = Vec::new();
-            for expr in pair.into_inner() {
-                ast.push(parse_expression(expr));
-            }
-            AST::Begin(ast)
-        }
-        Rule::call => {
-            let mut pairs = pair.into_inner();
-            let symbol = pairs.next().unwrap().as_str().to_string();
-            let mut args = Vec::new();
-            for expr in pairs {
-                args.push(parse_expression(expr));
-            }
-            AST::Call(symbol, args)
-        }
-        Rule::apply => {
-            let pairs = pair.into_inner();
-            let mut ast = Vec::new();
-            for expr in pairs {
-                ast.push(parse_expression(expr));
-            }
-            AST::Apply(ast)
-        }
-        Rule::mutate => {
-            // (mutate "x" ("x_1" (define x 10)) ("x_2" (define x 20)))
-            let mut pair = pair.into_inner();
-            let symbol = pair.peek().map(|p| parse_string(p));
-            if symbol.is_some() {
-                let _ = pair.next();
-            }
-            let mut mutations = Vec::new();
-            for expr in pair {
-                let mut pairs = expr.into_inner();
-                let name = parse_string(pairs.next().unwrap());
-                let expr = parse_expression(pairs.next().unwrap());
-                mutations.push((name, expr));
-            }
-            AST::Mutate(symbol, mutations)
-        }
-        Rule::lambda => {
-            let mut pairs = pair.into_inner();
-            let mut args = Vec::new();
-            while Rule::symbol == pairs.peek().unwrap().as_rule() {
-                args.push(pairs.next().unwrap().as_str().to_string());
-            }
-
-            let body = Box::new(parse_expression(pairs.next().unwrap()));
-            AST::Lambda(args, body)
-        }
-        Rule::ite => {
-            let mut pairs = pair.into_inner();
-            let condition = Box::new(parse_expression(pairs.next().unwrap()));
-            let then = Box::new(parse_expression(pairs.next().unwrap()));
-            let else_ = Box::new(parse_expression(pairs.next().unwrap()));
-            AST::If(condition, then, else_)
-        }
-
-        Rule::expression => parse_expression(pair.into_inner().next().unwrap()),
-        _ => unimplemented!("Rule not implemented: {:?}", pair.as_rule()),
-    }
-}
-
-fn parse_string(pair: pest::iterators::Pair<Rule>) -> String {
-    match pair.as_rule() {
-        Rule::string => {
-            let s = pair.as_str();
-            s[1..s.len() - 1].to_owned()
-        }
-        _ => unreachable!("Expected a string, found {:?}", pair.as_rule()),
-    }
-}
-
-fn eval(ast: AST, ctx: &mut HashMap<String, Value>) -> anyhow::Result<Value> {
-    match ast {
-        AST::Number(n) => Ok(Value::Number(n)),
-        AST::Symbol(s) => ctx
-            .get(&s)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Symbol '{s}' not found")),
-        AST::String(s) => Ok(Value::String(s)),
-        AST::Boolean(b) => Ok(Value::Boolean(b)),
-        AST::Define(id, ast) => {
-            let value = eval(*ast, ctx)?;
-            ctx.insert(id, value.clone());
-            Ok(value)
-        }
-        AST::Lambda(args, body) => Ok(Value::Function(args, body)),
-        AST::If(cond, then, else_) => {
-            let cond = eval(*cond, ctx)?;
-            match cond {
-                Value::Boolean(true) => eval(*then, ctx),
-                Value::Boolean(false) => eval(*else_, ctx),
-                _ => Err(anyhow::anyhow!("Expected a boolean, found {:?}", cond)),
-            }
-        }
-        AST::Begin(exprs) => {
-            let mut result = Value::Boolean(false);
-            for expr in exprs {
-                result = eval(expr, ctx)?;
-            }
-            Ok(result)
-        }
-        AST::Call(f, args) => {
-            let f = ctx
-                .get(&f)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("Symbol '{f}' not found"))?;
-            match f {
-                Value::Function(params, body) => {
-                    let mut new_ctx = ctx.clone();
-                    for (param, arg) in params.iter().zip(args.iter()) {
-                        new_ctx.insert(param.clone(), eval(arg.clone(), ctx)?);
-                    }
-                    eval(*body, &mut new_ctx)
-                }
-                Value::Builtin(b) => {
-                    let mut args_ = Vec::new();
-                    for arg in args {
-                        args_.push(eval(arg, ctx)?);
-                    }
-                    eval_builtin(b, args_)
-                }
-                _ => Err(anyhow::anyhow!("Expected a function, found {:?}", f)),
-            }
-        }
-        AST::Apply(exprs) => {
-            let first = exprs.first().unwrap();
-            let mut args = Vec::new();
-            for expr in exprs.iter().skip(1) {
-                args.push(eval(expr.clone(), ctx)?);
-            }
-
-            match eval(first.clone(), ctx)? {
-                Value::Function(params, body) => {
-                    let mut new_ctx = ctx.clone();
-                    for (param, arg) in params.iter().zip(args.iter()) {
-                        new_ctx.insert(param.clone(), arg.clone());
-                    }
-                    eval(*body, &mut new_ctx)
-                }
-                Value::Builtin(b) => eval_builtin(b, args),
-                _ => Err(anyhow::anyhow!("Expected a function, found {:?}", first)),
-            }
-        }
-        AST::Mutate(name, mutations) => {
-            // There are 2 ways to enable a mutation
-            // 1. If the variation name is not provided, mutations are only applied if
-            //   the mutation id is `Boolean(true)` in the context.
-            // 2. If the name is provided, then the mutation can be applied
-            //   if the variation name is `Number(n)` where n is the index of the mutation.
-
-            let mut result = Value::Boolean(false);
-            let mut applied = false;
-            // search for the names of the mutations
-            for (name, expr) in mutations.iter() {
-                if ctx.get(name) == Some(&Value::Boolean(true)) {
-                    // found the mutation, apply it
-                    result = eval(expr.clone(), ctx)?;
-                    applied = true;
-                    break;
-                }
-            }
-
-            if !applied && name.is_some() {
-                let name = name.unwrap();
-                if let Some(Value::Number(n)) = ctx.get(&name) {
-                    if let Some((_, expr)) = mutations.get(*n as usize) {
-                        result = eval(expr.clone(), ctx)?;
-                    }
-                }
-            }
-
-            Ok(result)
-        }
-    }
-}
-
-fn eval_builtin(builtin: Builtin, args: Vec<Value>) -> anyhow::Result<Value> {
-    match builtin {
-        Builtin::Sum => {
-            let mut sum = 0;
-            for arg in args {
-                if let Value::Number(n) = arg {
-                    sum += n;
-                } else {
-                    return Err(anyhow::anyhow!("Expected a number"));
-                }
-            }
-            Ok(Value::Number(sum))
-        }
-        Builtin::Mult => {
-            let mut mult = 1;
-            for arg in args {
-                if let Value::Number(n) = arg {
-                    mult *= n;
-                } else {
-                    return Err(anyhow::anyhow!("Expected a number"));
-                }
-            }
-            Ok(Value::Number(mult))
-        }
-        Builtin::And => {
-            let mut result = true;
-            for arg in args {
-                if let Value::Boolean(b) = arg {
-                    result = result && b;
-                } else {
-                    return Err(anyhow::anyhow!("Expected a boolean"));
-                }
-            }
-            Ok(Value::Boolean(result))
-        }
-        Builtin::Or => {
-            let mut result = false;
-            for arg in args {
-                if let Value::Boolean(b) = arg {
-                    result = result || b;
-                } else {
-                    return Err(anyhow::anyhow!("Expected a boolean"));
-                }
-            }
-            Ok(Value::Boolean(result))
-        }
-        Builtin::Not => {
-            if let Value::Boolean(b) = args[0] {
-                Ok(Value::Boolean(!b))
-            } else {
-                Err(anyhow::anyhow!("Expected a boolean"))
-            }
-        }
-        Builtin::Eq => {
-            if args.is_empty() {
-                return Ok(Value::Boolean(true));
-            }
-            let mut result = true;
-            let mut prev = args[0].clone();
-
-            for arg in &args[1..] {
-                let curr = arg.clone();
-                if prev != curr {
-                    result = false;
-                    break;
-                }
-                prev = curr;
-            }
-            Ok(Value::Boolean(result))
-        }
-        Builtin::Minus => {
-            if args.is_empty() {
-                return Ok(Value::Number(0));
-            }
-            let mut result = if let Value::Number(n) = args[0] {
-                n
-            } else {
-                return Err(anyhow::anyhow!("Expected a number"));
-            };
-
-            for arg in &args[1..] {
-                if let Value::Number(n) = arg {
-                    result -= n;
-                } else {
-                    return Err(anyhow::anyhow!("Expected a number"));
-                }
-            }
-            Ok(Value::Number(result))
-        }
     }
 }
 
@@ -3560,6 +2573,41 @@ fn boundary(flag: bool, x: i32, y: i32, t: Option<i32>) -> i32 {
     }
 
     #[test]
+    fn test_select_non_overlapping_replacements_prefers_inner_ranges() {
+        let selected = select_non_overlapping_replacements(vec![
+            TextReplacement {
+                range: 10..40,
+                replacement: "outer".to_string(),
+            },
+            TextReplacement {
+                range: 15..25,
+                replacement: "inner".to_string(),
+            },
+            TextReplacement {
+                range: 60..75,
+                replacement: "separate".to_string(),
+            },
+        ]);
+
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().any(|r| r.range == (15..25)));
+        assert!(selected.iter().any(|r| r.range == (60..75)));
+    }
+
+    #[test]
+    fn test_render_rust_functional_skips_inert_marker_blocks() {
+        let source = r#"/*| empty_base */
+/*|| empty_base_1 */
+/*|
+*/
+/* |*/
+"#;
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_eq!(converted, source);
+    }
+
+    #[test]
     fn test_render_rust_comment_code_from_functional_whitespace_and_guard_splits() {
         let functional = r#"
 fn mixed(l: i32, r: i32, flag: bool) -> i32 {
@@ -3779,196 +2827,5 @@ fn cmp(a: i32, b: i32) -> bool {
                 ("ext_2".to_string(), vec!["ext_2_1".to_string()]),
             ]
         );
-    }
-
-    #[test]
-    fn test_parser_simple() {
-        let input = "(define x 10)";
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Define(
-                "x".to_string(),
-                Box::new(AST::Number(10))
-            )])
-        );
-    }
-
-    #[test]
-    fn test_parser_nested() {
-        let input = "(define x (define y 10))";
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Define(
-                "x".to_string(),
-                Box::new(AST::Define("y".to_string(), Box::new(AST::Number(10))))
-            )])
-        );
-    }
-
-    #[test]
-    fn test_parser_multiple() {
-        let input = "(define x 10) (define y 20)";
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![
-                AST::Define("x".to_string(), Box::new(AST::Number(10))),
-                AST::Define("y".to_string(), Box::new(AST::Number(20)))
-            ])
-        );
-    }
-
-    #[test]
-    fn test_parser_call() {
-        let input = "(f 10 20)";
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Call(
-                "f".to_string(),
-                vec![AST::Number(10), AST::Number(20)]
-            )])
-        );
-    }
-
-    #[test]
-    fn test_parser_apply() {
-        let input = "((+ 10) 20)";
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Apply(vec![
-                AST::Call("+".to_string(), vec![AST::Number(10)]),
-                AST::Number(20)
-            ])])
-        );
-    }
-
-    #[test]
-    fn test_parser_mutate() {
-        let input = r#"(mutate "x" ("x_1" (define x 10)) ("x_2" (define x 20)))"#;
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Mutate(
-                Some("x".to_string()),
-                vec![
-                    (
-                        "x_1".to_string(),
-                        AST::Define("x".to_string(), Box::new(AST::Number(10)))
-                    ),
-                    (
-                        "x_2".to_string(),
-                        AST::Define("x".to_string(), Box::new(AST::Number(20)))
-                    )
-                ]
-            )])
-        );
-    }
-
-    #[test]
-    fn test_parser_comment() {
-        let input = r#"
-#| This is a comment |#
-(define x 10)
-"#;
-        let ast = parse(input).unwrap();
-        assert_eq!(
-            ast,
-            AST::Begin(vec![AST::Define(
-                "x".to_string(),
-                Box::new(AST::Number(10))
-            )])
-        );
-    }
-
-    #[test]
-    fn test_eval_simple() {
-        let input = r#"
-(define id (lambda (x) x))
-(id 3)
-"#;
-        let ast = parse(input).unwrap();
-        let result = eval(ast, &mut HashMap::new()).unwrap();
-        assert_eq!(result, Value::Number(3))
-    }
-
-    #[test]
-    fn test_eval_builtin() {
-        let input = r#"
-(define sum (lambda (x y) (+ x y)))
-(sum 3 4)
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("+".to_string(), Value::Builtin(Builtin::Sum));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Number(7))
-    }
-
-    #[test]
-    fn test_eval_mutate() {
-        let input = r#"
-(mutate "x" ("x_1" (define x 20)) ("x_2" (define x 30)))
-x
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("x_1".to_string(), Value::Boolean(true));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Number(20))
-    }
-
-    #[test]
-    fn test_eval_if() {
-        let input = r#"
-(+ (if #t 10 20) (if #f 30 40))
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("+".to_string(), Value::Builtin(Builtin::Sum));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Number(50))
-    }
-
-    #[test]
-    fn test_eval_eq() {
-        let input = r#"
-(eq 10 10 10)
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("eq".to_string(), Value::Builtin(Builtin::Eq));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Boolean(true))
-    }
-
-    #[test]
-    fn test_eval_anonymous() {
-        let input = r#"
-((lambda (x y) (+ x y)) 10 20)
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("+".to_string(), Value::Builtin(Builtin::Sum));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Number(30))
-    }
-
-    #[test]
-    fn test_eval_recursion() {
-        let input = r#"
-(define fact (lambda (n) (if (eq n 0) 1 (* n (fact (- n 1))))))
-(fact 5)
-"#;
-        let ast = parse(input).unwrap();
-        let mut ctx = HashMap::new();
-        ctx.insert("eq".to_string(), Value::Builtin(Builtin::Eq));
-        ctx.insert("*".to_string(), Value::Builtin(Builtin::Mult));
-        ctx.insert("-".to_string(), Value::Builtin(Builtin::Minus));
-        let result = eval(ast, &mut ctx).unwrap();
-        assert_eq!(result, Value::Number(120))
     }
 }

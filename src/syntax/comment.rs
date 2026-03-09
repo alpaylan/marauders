@@ -198,8 +198,10 @@ fn parse_variation_header(
 
 fn parse_base(pair: pest::iterators::Pair<Rule>) -> VariantBody {
     let mut pairs = pair.into_inner();
-    let body = pairs.next().unwrap();
-    parse_variant_body(body)
+    match pairs.next() {
+        Some(body) => parse_variant_body(body),
+        None => VariantBody::Active { lines: vec![] },
+    }
 }
 
 fn parse_variant(pair: pest::iterators::Pair<Rule>) -> Variant {
@@ -289,7 +291,7 @@ fn parse_variant_body(pair: pest::iterators::Pair<Rule>) -> VariantBody {
                 .collect();
 
             let (_, end_marker) = next2(&mut pairs, Rule::indent).unwrap();
-            assert_eq!(end_marker.as_rule(), Rule::comment_end);
+            assert_eq!(end_marker.as_rule(), Rule::block_comment_end);
 
             log::debug!("inactive multi-line variant body: {:?}", body);
             log::debug!("inactive multi-line variant indentation: {:?}", indentation);
@@ -824,6 +826,47 @@ end."#,
     }
 
     #[test]
+    fn test_inactive_multiline_variant_allows_standalone_slash_comment_line() {
+        let result = parse_code(
+            r#"pub fn f(x: i32) -> i32 {
+    /*| demo_scope */
+    /*|
+    if x > 0 {
+        //
+        return x + 1;
+    }
+    */
+    /*|| bug_demo */
+    if x > 0 {
+        return x;
+    }
+    /* |*/
+    x
+}"#,
+        )
+        .unwrap();
+
+        if let SpanContent::Variation(v) = &result[1].content {
+            assert_eq!(v.name, Some("demo_scope".to_string()));
+            assert_eq!(v.active, 1);
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "bug_demo");
+            assert!(matches!(v.base.body, VariantBody::InactiveMultiLine { .. }));
+            assert_eq!(
+                v.base.lines(),
+                vec![
+                    "    if x > 0 {",
+                    "        //",
+                    "        return x + 1;",
+                    "    }",
+                ]
+            );
+        } else {
+            panic!("unexpected span content {:?}", result[1].content);
+        }
+    }
+
+    #[test]
     fn test_inactive_multiline_variant_allows_empty_body() {
         let result = parse_code(
             r#"fn f() {
@@ -849,6 +892,35 @@ end."#,
             assert_eq!(v.variants[0].lines(), Vec::<String>::new());
         } else {
             panic!("unexpected span content {:?}", result[1].content);
+        }
+    }
+
+    #[test]
+    fn test_variation_allows_empty_base_before_first_variant() {
+        let result = parse_code(
+            r#"/*| empty_base */
+/*|| empty_base_1 */
+/*|
+*/
+/* |*/"#,
+        )
+        .unwrap();
+
+        let variation = result
+            .iter()
+            .find_map(|span| match &span.content {
+                SpanContent::Variation(v) => Some(v),
+                _ => None,
+            })
+            .expect("expected variation span");
+        {
+            let v = variation;
+            assert_eq!(v.name.as_deref(), Some("empty_base"));
+            assert_eq!(v.active, 0);
+            assert!(v.base.lines().is_empty());
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "empty_base_1");
+            assert!(v.variants[0].lines().is_empty());
         }
     }
 

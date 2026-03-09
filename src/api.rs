@@ -819,14 +819,12 @@ pub fn auto_generate_and_import_rust_mutants(
         name_prefix,
     );
 
-    if let Some(copy_result) = copied_diffs {
-        if let Err(copy_err) = copy_result {
-            let _ = std::fs::remove_dir_all(&cargo_mutants_out);
-            if cleanup_synthetic_project {
-                let _ = std::fs::remove_dir_all(&project_root);
-            }
-            return Err(copy_err);
+    if let Some(Err(copy_err)) = copied_diffs {
+        let _ = std::fs::remove_dir_all(&cargo_mutants_out);
+        if cleanup_synthetic_project {
+            let _ = std::fs::remove_dir_all(&project_root);
         }
+        return Err(copy_err);
     }
 
     if result.is_err() && !run.status.success() {

@@ -7,7 +7,7 @@ pub fn compute_mutations(
     expr: &str,
     tag_map: &HashMap<String, Vec<String>>,
     variation_map: &HashMap<String, Vec<String>>,
-    variant_list: &Vec<String>,
+    variant_list: &[String],
 ) -> anyhow::Result<Vec<Vec<String>>> {
     let mut parser = Parser::new(expr);
     let expr = parser.parse();
@@ -46,7 +46,7 @@ impl Expr {
         &self,
         tag_map: &HashMap<String, Vec<String>>,
         variation_map: &HashMap<String, Vec<String>>,
-        variant_list: &Vec<String>,
+        variant_list: &[String],
     ) -> anyhow::Result<Vec<Vec<String>>> {
         // Distributes tags +t into (t1 + t2 + ... + tn) and *t into (t1 * t2 * ... * tn)
         let tagless_expr = self.distribute_tags(tag_map);

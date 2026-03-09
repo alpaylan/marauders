@@ -17,7 +17,7 @@ variation_header       =  { indent? ~ variation_begin_marker ~ WHITE_SPACE ~ (id
 variation_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
 variation_end          = @{ indent? ~ comment_begin ~ WHITE_SPACE ~ MUTANT_MARKER ~ comment_end }
 
-base = { variant_body }
+base = { variant_body? }
 
 variant = { variant_header ~ NL ~ variant_body }
 
@@ -27,8 +27,8 @@ variant_header       =  { indent? ~ variant_begin_marker ~ WHITE_SPACE ~ identif
 variant_body = { inactive_multi_line_variant_body | inactive_single_line_variant_body | active_variant_body }
 
 inactive_single_line_variant_body =  { indent? ~ variant_body_begin_marker ~ single_line_comment_text ~ comment_end ~ NL }
-inactive_multi_line_variant_body  =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ comment_end ~ NL }
-variant_body_begin_marker         = @{ comment_begin ~ MUTANT_MARKER }
+inactive_multi_line_variant_body  =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ block_comment_end ~ NL }
+variant_body_begin_marker         = @{ comment_begin ~ MUTANT_MARKER ~ !MUTANT_MARKER }
 
 active_variant_body = { line+ }
 
@@ -40,11 +40,12 @@ tag = { identifier }
 
 comment_begin = { "(*" | "/*" | "{-" | "#|" | "//" | "\"\"\"" }
 comment_end   = { "*)" | "*/" | "-}" | "|#" | "//" | "\"\"\"" }
+block_comment_end = { "*)" | "*/" | "-}" | "|#" | "\"\"\"" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
 
 comment_text             = { comment_line* }
-comment_line             = { !(indent? ~ comment_end ~ NL) ~ (!NL ~ ANY)* ~ NL }
+comment_line             = { !(indent? ~ block_comment_end ~ NL) ~ (!NL ~ ANY)* ~ NL }
 single_line_comment_text = { (!NL ~ !comment_end ~ ANY)* }
 
 program = { SOI ~ code ~ EOI }

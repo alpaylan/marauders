@@ -254,8 +254,20 @@ fn run_convert_command(path: &Path, to: &ConvertTarget) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn ensure_project_parseable(project: &Project) -> anyhow::Result<()> {
+    if project.parse_errors.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "failed to parse {} file(s):\n{}",
+        project.parse_errors.len(),
+        project.parse_errors.join("\n")
+    );
+}
+
 fn run_list_command(path: &Path, pattern: Option<&str>) -> anyhow::Result<()> {
     let project = Project::new(path, pattern)?;
+    ensure_project_parseable(&project)?;
 
     for info in api::list_variations(&project) {
         let name = info.name.as_deref().unwrap_or("anonymous");
@@ -306,13 +318,17 @@ fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow:
                         .collect::<Vec<String>>()
                         .join(",\n")
                 );
-                return Ok(());
+                return Err(anyhow::anyhow!(
+                    "{}",
+                    ApiError::VariantNotFound { variant, available }
+                ));
             }
             Err(e) => return Err(anyhow::anyhow!("{}", e)),
         }
     }
 
     let mut project = Project::new(path, pattern)?;
+    ensure_project_parseable(&project)?;
 
     match api::set_variant(&mut project, variant) {
         Ok(result) => {
@@ -357,7 +373,10 @@ fn run_set_command(path: &Path, variant: &str, pattern: Option<&str>) -> anyhow:
                     .collect::<Vec<String>>()
                     .join(",\n")
             );
-            Ok(())
+            Err(anyhow::anyhow!(
+                "{}",
+                ApiError::VariantNotFound { variant, available }
+            ))
         }
         Err(ApiError::AlreadyActive { variant }) => {
             log::warn!("variant '{}' is already active", variant);
@@ -389,13 +408,17 @@ fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
                         .collect::<Vec<String>>()
                         .join(",\n")
                 );
-                return Ok(());
+                return Err(anyhow::anyhow!(
+                    "{}",
+                    ApiError::VariantNotFound { variant, available }
+                ));
             }
             Err(e) => return Err(anyhow::anyhow!("{}", e)),
         }
     }
 
     let mut project = Project::new(path, None)?;
+    ensure_project_parseable(&project)?;
 
     match api::unset_variant(&mut project, variant) {
         Ok(result) => {
@@ -430,7 +453,10 @@ fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
                     .collect::<Vec<String>>()
                     .join(",\n")
             );
-            Ok(())
+            Err(anyhow::anyhow!(
+                "{}",
+                ApiError::VariantNotFound { variant, available }
+            ))
         }
         Err(e) => Err(anyhow::anyhow!("{}", e)),
     }
@@ -438,6 +464,7 @@ fn run_unset_command(path: &Path, variant: &str) -> anyhow::Result<()> {
 
 fn run_reset_command(path: &Path) -> anyhow::Result<()> {
     let mut project = Project::new(path, None)?;
+    ensure_project_parseable(&project)?;
 
     let results = api::reset_all(&mut project)?;
 
@@ -474,7 +501,7 @@ fn run_run_command(expr: &str, path: &Path, command: &str, nocapture: bool) -> a
     let variation_map = project.variation_map();
     let variant_list = project.all_variants();
 
-    let tests = algebra::compute_mutations(&expr, &tag_map, &variation_map, &variant_list)?;
+    let tests = algebra::compute_mutations(expr, &tag_map, &variation_map, &variant_list)?;
 
     for test in tests {
         project.set_many(&test)?;
