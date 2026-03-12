@@ -609,3 +609,66 @@ fn run_config_command(config_command: &ConfigCommand) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn marker_fixture(variant: &str, malformed: bool) -> String {
+        let comment_open = "/*";
+        let marker = "|";
+        let variation_begin = format!("{comment_open}{marker} add */");
+        let variant_begin = format!("{comment_open}{marker}{marker} {variant} */");
+        let body_begin = format!("{comment_open}{marker}");
+        let variation_end = format!("{comment_open} {marker}*/");
+
+        if malformed {
+            format!(
+                "fn calc(a: i32, b: i32) -> i32 {{\n    {variation_begin}\n    a + b\n    {variant_begin}\n    {body_begin}\n    a - b\n}}\n"
+            )
+        } else {
+            format!(
+                "fn calc(a: i32, b: i32) -> i32 {{\n    {variation_begin}\n    a + b\n    {variant_begin}\n    {body_begin}\n    a - b\n    */\n    {variation_end}\n}}\n"
+            )
+        }
+    }
+
+    fn unique_temp_dir(stem: &str) -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        let dir = std::env::temp_dir().join(format!("{stem}_{pid}_{nanos}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_run_set_command_unknown_variant_is_error() {
+        let root = unique_temp_dir("marauders_cli_unknown_variant");
+        let file = root.join("sample.rs");
+        std::fs::write(&file, marker_fixture("add_1", false)).unwrap();
+
+        let err = run_set_command(&root, "does_not_exist", None).unwrap_err();
+        assert!(err.to_string().contains("does_not_exist"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_run_set_command_parse_error_reports_file_and_line() {
+        let root = unique_temp_dir("marauders_cli_parse_error");
+        let file = root.join("broken.rs");
+        std::fs::write(&file, marker_fixture("add_1", true)).unwrap();
+
+        let err = run_set_command(&root, "add_1", None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(&file.to_string_lossy().to_string()));
+        // parser diagnostics should include location metadata.
+        assert!(msg.contains("-->") || msg.contains(":"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -12,6 +15,8 @@ pub(crate) struct MatchReplaceApplyResult {
     pub(crate) variation_name: Option<String>,
     pub(crate) previous_active: usize,
     pub(crate) new_active: usize,
+    pub(crate) matched_scopes: usize,
+    pub(crate) updated_scopes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,77 +229,130 @@ fn apply_variant_in_match_replace(
     variant_name: &str,
     set_variant: bool,
 ) -> anyhow::Result<MatchReplaceApplyResult> {
-    let document = parse_document(input)?;
-    let (variation, variant_idx) = document
-        .variations
-        .iter()
-        .find_map(|variation| {
-            variation
-                .variants
-                .iter()
-                .enumerate()
-                .find(|(_, variant)| variant.name == variant_name)
-                .map(|(idx, _)| (variation, idx))
-        })
-        .ok_or_else(|| {
-            anyhow!(
-                "variant '{}' not found in match-replace document",
-                variant_name
-            )
-        })?;
-
-    let (scope_path, start_line, _end_line) = parse_scope_components(&variation.scope)?;
-    let source_path = PathBuf::from(scope_path);
-    let source = std::fs::read_to_string(&source_path).map_err(|e| {
+    let resolved = resolve_variations(parse_document(input)?)?;
+    let variant_index = build_variant_index(&resolved);
+    let scope_refs = variant_index.get(variant_name).cloned().ok_or_else(|| {
         anyhow!(
-            "failed to read source file '{}' referenced by scope: {}",
-            source_path.display(),
-            e
+            "variant '{}' not found in match-replace document",
+            variant_name
         )
     })?;
-    let (mut lines, trailing_newline) = split_lines_preserving_tail(&source);
 
-    let base_lines = split_lines_preserving_tail(&variation.pattern).0;
-    let variant_lines = variation
-        .variants
-        .iter()
-        .map(|variant| split_lines_preserving_tail(&variant.replacement).0)
-        .collect::<Vec<_>>();
-
-    let mut alternatives = Vec::with_capacity(1 + variant_lines.len());
-    alternatives.push(base_lines.clone());
-    alternatives.extend(variant_lines.clone());
-
-    let (start, end_exclusive, current_active) =
-        locate_variation_region(&lines, start_line, &alternatives).ok_or_else(|| {
-            anyhow!(
-                "unable to locate match-replace scope for variant '{}' in '{}'",
-                variant_name,
-                source_path.display()
-            )
-        })?;
-
-    let target_active = if set_variant { variant_idx + 1 } else { 0 };
-    let target_lines = if set_variant {
-        variant_lines[variant_idx].clone()
-    } else {
-        base_lines
-    };
-
-    if current_active != target_active {
-        lines.splice(start..end_exclusive, target_lines);
-        let mut output = lines.join("\n");
-        if trailing_newline {
-            output.push('\n');
-        }
-        std::fs::write(&source_path, output)?;
+    let mut by_path: BTreeMap<PathBuf, Vec<ScopeRef>> = BTreeMap::new();
+    for scope_ref in scope_refs {
+        by_path
+            .entry(scope_ref.source_path.clone())
+            .or_default()
+            .push(scope_ref);
     }
 
+    let mut pending_writes = Vec::new();
+    let mut representative: Option<(PathBuf, Option<String>, usize, usize)> = None;
+    let mut matched_scopes = 0usize;
+    let mut updated_scopes = 0usize;
+
+    for (source_path, mut refs) in by_path {
+        let source = std::fs::read_to_string(&source_path).map_err(|e| {
+            anyhow!(
+                "failed to read source file '{}' referenced by scope: {}",
+                source_path.display(),
+                e
+            )
+        })?;
+        let (mut lines, trailing_newline) = split_lines_preserving_tail(&source);
+        let mut changed_this_file = false;
+
+        // Process from bottom to top so in-memory line offsets remain stable.
+        refs.sort_by(|l, r| r.start_line.cmp(&l.start_line));
+
+        for scope_ref in refs {
+            matched_scopes += 1;
+            let variation = &resolved[scope_ref.variation_idx];
+
+            let mut alternatives = Vec::with_capacity(1 + variation.variant_lines.len());
+            alternatives.push(variation.base_lines.clone());
+            alternatives.extend(variation.variant_lines.clone());
+
+            let (start, end_exclusive, current_active) = locate_variation_region(
+                &lines,
+                variation.start_line,
+                &alternatives,
+            )
+            .ok_or_else(|| {
+                anyhow!(
+                    "unable to locate scope '{}' in '{}' (line {}) for variant '{}'",
+                    variation.variation.scope,
+                    source_path.display(),
+                    variation.start_line,
+                    variant_name
+                )
+            })?;
+
+            let desired_active = if set_variant {
+                scope_ref.variant_idx + 1
+            } else {
+                0
+            };
+
+            // `unset --variant X` only resets scopes currently active as X.
+            let should_update = if set_variant {
+                current_active != desired_active
+            } else {
+                current_active == scope_ref.variant_idx + 1
+            };
+
+            let new_active = if should_update {
+                desired_active
+            } else {
+                current_active
+            };
+            if representative.is_none() {
+                representative = Some((
+                    source_path.clone(),
+                    variation.variation.name.clone(),
+                    current_active,
+                    new_active,
+                ));
+            }
+
+            if should_update {
+                let replacement = if set_variant {
+                    variation.variant_lines[scope_ref.variant_idx].clone()
+                } else {
+                    variation.base_lines.clone()
+                };
+                lines.splice(start..end_exclusive, replacement);
+                updated_scopes += 1;
+                changed_this_file = true;
+            }
+        }
+
+        if changed_this_file {
+            let mut output = lines.join("\n");
+            if trailing_newline {
+                output.push('\n');
+            }
+            pending_writes.push((source_path, output));
+        }
+    }
+
+    for (path, output) in pending_writes {
+        std::fs::write(path, output)?;
+    }
+
+    let (source_path, variation_name, previous_active, new_active) = representative.unwrap_or((
+        PathBuf::new(),
+        None,
+        0,
+        0,
+    ));
     Ok(MatchReplaceApplyResult {
         source_path,
-        variation_name: variation.name.clone(),
-        previous_active: current_active,
-        new_active: target_active,
+        variation_name,
+        previous_active,
+        new_active,
+        matched_scopes,
+        updated_scopes,
     })
 }
 
@@ -513,6 +571,60 @@ struct MatchReplaceDocument {
     variations: Vec<MatchReplaceVariation>,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedVariation {
+    variation: MatchReplaceVariation,
+    source_path: PathBuf,
+    start_line: usize,
+    base_lines: Vec<String>,
+    variant_lines: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct ScopeRef {
+    variation_idx: usize,
+    variant_idx: usize,
+    source_path: PathBuf,
+    start_line: usize,
+}
+
+fn resolve_variations(document: MatchReplaceDocument) -> anyhow::Result<Vec<ResolvedVariation>> {
+    document
+        .variations
+        .into_iter()
+        .map(|variation| {
+            let (scope_path, start_line, end_line) = parse_scope_components(&variation.scope)?;
+            validate_scope_order(start_line, end_line)?;
+            Ok(ResolvedVariation {
+                source_path: PathBuf::from(scope_path),
+                start_line,
+                base_lines: split_lines_preserving_tail(&variation.pattern).0,
+                variant_lines: variation
+                    .variants
+                    .iter()
+                    .map(|variant| split_lines_preserving_tail(&variant.replacement).0)
+                    .collect(),
+                variation,
+            })
+        })
+        .collect()
+}
+
+fn build_variant_index(resolved_variations: &[ResolvedVariation]) -> HashMap<String, Vec<ScopeRef>> {
+    let mut index: HashMap<String, Vec<ScopeRef>> = HashMap::new();
+    for (variation_idx, variation) in resolved_variations.iter().enumerate() {
+        for (variant_idx, variant) in variation.variation.variants.iter().enumerate() {
+            index.entry(variant.name.clone()).or_default().push(ScopeRef {
+                variation_idx,
+                variant_idx,
+                source_path: variation.source_path.clone(),
+                start_line: variation.start_line,
+            });
+        }
+    }
+    index
+}
+
 fn split_lines_preserving_tail(input: &str) -> (Vec<String>, bool) {
     if input.is_empty() {
         return (Vec::new(), false);
@@ -551,6 +663,16 @@ fn count_lines(input: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn unique_temp_path(stem: &str) -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        std::env::temp_dir().join(format!("{stem}_{pid}_{nanos}.rs"))
+    }
 
     #[test]
     fn test_comment_match_replace_comment_roundtrip() {
@@ -654,6 +776,8 @@ fn calc(a: i32, b: i32) -> i32 {
         assert_eq!(set_result.source_path, source_path);
         assert_eq!(set_result.previous_active, 0);
         assert_eq!(set_result.new_active, 1);
+        assert_eq!(set_result.matched_scopes, 1);
+        assert_eq!(set_result.updated_scopes, 1);
         let after_set = std::fs::read_to_string(&source_path).unwrap();
         assert!(after_set.contains("a - b"));
         assert!(!after_set.contains("a + b"));
@@ -662,14 +786,167 @@ fn calc(a: i32, b: i32) -> i32 {
         let set_again = set_variant_in_match_replace(&match_replace, "add_1").unwrap();
         assert_eq!(set_again.previous_active, 1);
         assert_eq!(set_again.new_active, 1);
+        assert_eq!(set_again.updated_scopes, 0);
 
         let unset_result = unset_variant_in_match_replace(&match_replace, "add_1").unwrap();
         assert_eq!(unset_result.source_path, source_path);
         assert_eq!(unset_result.previous_active, 1);
         assert_eq!(unset_result.new_active, 0);
+        assert_eq!(unset_result.matched_scopes, 1);
+        assert_eq!(unset_result.updated_scopes, 1);
         let after_unset = std::fs::read_to_string(&source_path).unwrap();
         assert!(after_unset.contains("a + b"));
         assert!(!after_unset.contains("a - b"));
+
+        let _ = std::fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn test_set_unset_multi_scope_same_file() {
+        let source_path = unique_temp_path("marauders_match_replace_multi_scope_same_file");
+        std::fs::write(
+            &source_path,
+            r#"fn calc(a: i32, b: i32) -> i32 {
+    let left = a + b;
+    let right = a + b;
+    left + right
+}
+"#,
+        )
+        .unwrap();
+
+        let document = serde_json::to_string_pretty(&json!([
+            {
+                "name": "left_mut",
+                "scope": format!("{}:2", source_path.to_string_lossy()),
+                "match": "    let left = a + b;",
+                "variants": [{"name": "bug_multi", "replacement": "    let left = a - b;"}]
+            },
+            {
+                "name": "right_mut",
+                "scope": format!("{}:3", source_path.to_string_lossy()),
+                "match": "    let right = a + b;",
+                "variants": [{"name": "bug_multi", "replacement": "    let right = a - b;"}]
+            }
+        ]))
+        .unwrap();
+
+        let set_result = set_variant_in_match_replace(&document, "bug_multi").unwrap();
+        assert_eq!(set_result.matched_scopes, 2);
+        assert_eq!(set_result.updated_scopes, 2);
+        let after_set = std::fs::read_to_string(&source_path).unwrap();
+        assert!(after_set.contains("let left = a - b;"));
+        assert!(after_set.contains("let right = a - b;"));
+
+        // Idempotent second set.
+        let set_again = set_variant_in_match_replace(&document, "bug_multi").unwrap();
+        assert_eq!(set_again.matched_scopes, 2);
+        assert_eq!(set_again.updated_scopes, 0);
+        let after_set_again = std::fs::read_to_string(&source_path).unwrap();
+        assert_eq!(after_set_again, after_set);
+
+        let unset_result = unset_variant_in_match_replace(&document, "bug_multi").unwrap();
+        assert_eq!(unset_result.matched_scopes, 2);
+        assert_eq!(unset_result.updated_scopes, 2);
+        let after_unset = std::fs::read_to_string(&source_path).unwrap();
+        assert!(after_unset.contains("let left = a + b;"));
+        assert!(after_unset.contains("let right = a + b;"));
+
+        // Idempotent second unset.
+        let unset_again = unset_variant_in_match_replace(&document, "bug_multi").unwrap();
+        assert_eq!(unset_again.matched_scopes, 2);
+        assert_eq!(unset_again.updated_scopes, 0);
+        let after_unset_again = std::fs::read_to_string(&source_path).unwrap();
+        assert_eq!(after_unset_again, after_unset);
+
+        let _ = std::fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn test_set_unset_multi_scope_cross_file() {
+        let source_path_a = unique_temp_path("marauders_match_replace_multi_scope_cross_file_a");
+        let source_path_b = unique_temp_path("marauders_match_replace_multi_scope_cross_file_b");
+        std::fs::write(
+            &source_path_a,
+            "fn a() {\n    let x = 10;\n    let y = 20;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &source_path_b,
+            "fn b() {\n    let x = 10;\n    let y = 20;\n}\n",
+        )
+        .unwrap();
+
+        let document = serde_json::to_string_pretty(&json!([
+            {
+                "name": "mut_a",
+                "scope": format!("{}:2", source_path_a.to_string_lossy()),
+                "match": "    let x = 10;",
+                "variants": [{"name": "bug_cross", "replacement": "    let x = 11;"}]
+            },
+            {
+                "name": "mut_b",
+                "scope": format!("{}:2", source_path_b.to_string_lossy()),
+                "match": "    let x = 10;",
+                "variants": [{"name": "bug_cross", "replacement": "    let x = 11;"}]
+            }
+        ]))
+        .unwrap();
+
+        let set_result = set_variant_in_match_replace(&document, "bug_cross").unwrap();
+        assert_eq!(set_result.matched_scopes, 2);
+        assert_eq!(set_result.updated_scopes, 2);
+        assert!(std::fs::read_to_string(&source_path_a)
+            .unwrap()
+            .contains("let x = 11;"));
+        assert!(std::fs::read_to_string(&source_path_b)
+            .unwrap()
+            .contains("let x = 11;"));
+
+        let unset_result = unset_variant_in_match_replace(&document, "bug_cross").unwrap();
+        assert_eq!(unset_result.matched_scopes, 2);
+        assert_eq!(unset_result.updated_scopes, 2);
+        assert!(std::fs::read_to_string(&source_path_a)
+            .unwrap()
+            .contains("let x = 10;"));
+        assert!(std::fs::read_to_string(&source_path_b)
+            .unwrap()
+            .contains("let x = 10;"));
+
+        let _ = std::fs::remove_file(source_path_a);
+        let _ = std::fs::remove_file(source_path_b);
+    }
+
+    #[test]
+    fn test_unknown_variant_and_scope_parse_error() {
+        let source_path = unique_temp_path("marauders_match_replace_unknown_variant");
+        std::fs::write(&source_path, "fn demo() {\n    let a = 1;\n}\n").unwrap();
+
+        let valid_document = serde_json::to_string_pretty(&json!([
+            {
+                "scope": format!("{}:2", source_path.to_string_lossy()),
+                "match": "    let a = 1;",
+                "variants": [{"name": "known", "replacement": "    let a = 2;"}]
+            }
+        ]))
+        .unwrap();
+
+        let unknown = set_variant_in_match_replace(&valid_document, "does_not_exist").unwrap_err();
+        assert!(unknown.to_string().contains("does_not_exist"));
+
+        let invalid_scope_document = serde_json::to_string_pretty(&json!([
+            {
+                "scope": format!("{}:line_two", source_path.to_string_lossy()),
+                "match": "    let a = 1;",
+                "variants": [{"name": "known", "replacement": "    let a = 2;"}]
+            }
+        ]))
+        .unwrap();
+
+        let parse_err = set_variant_in_match_replace(&invalid_scope_document, "known").unwrap_err();
+        let parse_err_text = parse_err.to_string();
+        assert!(parse_err_text.contains(&source_path.to_string_lossy().to_string()));
+        assert!(parse_err_text.contains("line_two"));
 
         let _ = std::fs::remove_file(source_path);
     }

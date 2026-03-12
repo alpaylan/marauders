@@ -167,64 +167,27 @@ pub fn list_variations(project: &Project) -> Vec<VariationInfo> {
 /// * `Ok(SetResult)` - Information about what was changed
 /// * `Err(ApiError)` - If the variant was not found or is already active
 pub fn set_variant(project: &mut Project, variant: &str) -> Result<SetResult, ApiError> {
-    let mut all_variants = Vec::new();
-
-    for file in project.files.iter_mut() {
-        let code = &mut file.code;
-
-        // Find the variation containing this variant
-        if let Some((variation_index, span)) = code.spans.iter().enumerate().find(|(_, s)| match &s
-            .content
-        {
-            SpanContent::Variation(v) => v.variants.iter().any(|var| var.name == variant),
-            _ => false,
-        }) {
-            let variation = match &span.content {
-                SpanContent::Variation(v) => v,
-                _ => unreachable!(),
-            };
-
-            let previous_active = variation.active;
-            let variation_name = variation.name.clone();
-
-            // Find the variant index
-            let (variant_index, _) = variation
-                .variants
-                .iter()
-                .enumerate()
-                .find(|(_, v)| v.name == variant)
-                .ok_or_else(|| ApiError::VariantNotFound {
-                    variant: variant.to_string(),
-                    available: variation.variants.iter().map(|v| v.name.clone()).collect(),
-                })?;
-
-            // Shift index by 1 because 0 is reserved for base
-            let new_active = variant_index + 1;
-
-            if previous_active == new_active {
-                return Err(ApiError::AlreadyActive {
-                    variant: variant.to_string(),
-                });
-            }
-
-            code.set_active_variant(variation_index, new_active)
-                .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-
-            return Ok(SetResult {
-                file: file.path.clone(),
-                variation: variation_name,
-                previous_active,
-                new_active,
-            });
-        } else {
-            // Collect variants from this file for error reporting
-            all_variants.extend(code.get_all_variants());
-        }
+    let (targets, all_variants) = collect_variant_targets(project, variant, true);
+    if targets.is_empty() {
+        return Err(ApiError::VariantNotFound {
+            variant: variant.to_string(),
+            available: all_variants,
+        });
     }
 
-    Err(ApiError::VariantNotFound {
-        variant: variant.to_string(),
-        available: all_variants,
+    if targets.iter().all(|target| target.previous_active == target.target_active) {
+        return Err(ApiError::AlreadyActive {
+            variant: variant.to_string(),
+        });
+    }
+
+    apply_variant_targets(project, &targets)?;
+    let summary = summarize_targets(&targets);
+    Ok(SetResult {
+        file: summary.file.clone(),
+        variation: summary.variation.clone(),
+        previous_active: summary.previous_active,
+        new_active: summary.target_active,
     })
 }
 
@@ -240,44 +203,21 @@ pub fn set_variant(project: &mut Project, variant: &str) -> Result<SetResult, Ap
 /// * `Ok(SetResult)` - Information about what was changed
 /// * `Err(ApiError)` - If the variant was not found
 pub fn unset_variant(project: &mut Project, variant: &str) -> Result<SetResult, ApiError> {
-    let mut all_variants = Vec::new();
-
-    for file in project.files.iter_mut() {
-        let code = &mut file.code;
-
-        // Find the variation containing this variant
-        if let Some((variation_index, span)) = code.spans.iter().enumerate().find(|(_, s)| match &s
-            .content
-        {
-            SpanContent::Variation(v) => v.variants.iter().any(|var| var.name == variant),
-            _ => false,
-        }) {
-            let variation = match &span.content {
-                SpanContent::Variation(v) => v,
-                _ => unreachable!(),
-            };
-
-            let previous_active = variation.active;
-            let variation_name = variation.name.clone();
-
-            // Reset to base (index 0)
-            code.set_active_variant(variation_index, 0)
-                .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-
-            return Ok(SetResult {
-                file: file.path.clone(),
-                variation: variation_name,
-                previous_active,
-                new_active: 0,
-            });
-        } else {
-            all_variants.extend(code.get_all_variants());
-        }
+    let (targets, all_variants) = collect_variant_targets(project, variant, false);
+    if targets.is_empty() {
+        return Err(ApiError::VariantNotFound {
+            variant: variant.to_string(),
+            available: all_variants,
+        });
     }
 
-    Err(ApiError::VariantNotFound {
-        variant: variant.to_string(),
-        available: all_variants,
+    apply_variant_targets(project, &targets)?;
+    let summary = summarize_targets(&targets);
+    Ok(SetResult {
+        file: summary.file.clone(),
+        variation: summary.variation.clone(),
+        previous_active: summary.previous_active,
+        new_active: summary.target_active,
     })
 }
 
@@ -308,8 +248,14 @@ pub fn try_set_variant_match_replace(
 
     let applied = crate::syntax::match_replace::set_variant_in_match_replace(&content, variant)
         .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    log::debug!(
+        "match-replace set variant '{}' matched {} scope(s), updated {} scope(s)",
+        variant,
+        applied.matched_scopes,
+        applied.updated_scopes
+    );
 
-    if applied.previous_active == applied.new_active {
+    if applied.updated_scopes == 0 {
         return Err(ApiError::AlreadyActive {
             variant: variant.to_string(),
         });
@@ -321,6 +267,113 @@ pub fn try_set_variant_match_replace(
         previous_active: applied.previous_active,
         new_active: applied.new_active,
     }))
+}
+
+#[derive(Debug, Clone)]
+struct VariantTarget {
+    file_index: usize,
+    variation_index: usize,
+    file: PathBuf,
+    variation: Option<String>,
+    previous_active: usize,
+    target_active: usize,
+}
+
+fn collect_variant_targets(
+    project: &Project,
+    variant: &str,
+    set_variant: bool,
+) -> (Vec<VariantTarget>, Vec<String>) {
+    let mut all_variants = Vec::new();
+    let mut targets = Vec::new();
+
+    for (file_index, file) in project.files.iter().enumerate() {
+        for (variation_index, span) in file.code.spans.iter().enumerate() {
+            let SpanContent::Variation(variation) = &span.content else {
+                continue;
+            };
+
+            all_variants.extend(variation.variants.iter().map(|v| v.name.clone()));
+            if let Some((variant_index, _)) = variation
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant)
+            {
+                let selected_active = variant_index + 1;
+                let target_active = if set_variant {
+                    selected_active
+                } else if variation.active == selected_active {
+                    0
+                } else {
+                    variation.active
+                };
+                targets.push(VariantTarget {
+                    file_index,
+                    variation_index,
+                    file: file.path.clone(),
+                    variation: variation.name.clone(),
+                    previous_active: variation.active,
+                    target_active,
+                });
+            }
+        }
+    }
+
+    (targets, all_variants)
+}
+
+fn apply_variant_targets(project: &mut Project, targets: &[VariantTarget]) -> Result<(), ApiError> {
+    let mut touched_files = HashSet::new();
+    for target in targets {
+        if target.previous_active == target.target_active {
+            continue;
+        }
+
+        let file = project.files.get_mut(target.file_index).ok_or_else(|| {
+            ApiError::ProjectError(format!("invalid file index {}", target.file_index))
+        })?;
+        let span = file
+            .code
+            .spans
+            .get_mut(target.variation_index)
+            .ok_or_else(|| {
+                ApiError::ProjectError(format!(
+                    "invalid variation index {} for file '{}'",
+                    target.variation_index,
+                    file.path.display()
+                ))
+            })?;
+        let SpanContent::Variation(variation) = &mut span.content else {
+            return Err(ApiError::ProjectError(format!(
+                "targeted non-variation span in '{}'",
+                file.path.display()
+            )));
+        };
+        variation.activate_variant(target.target_active);
+        touched_files.insert(target.file_index);
+    }
+
+    let mut touched_files = touched_files.into_iter().collect::<Vec<_>>();
+    touched_files.sort_unstable();
+
+    for file_index in touched_files {
+        let file = project.files.get(file_index).ok_or_else(|| {
+            ApiError::ProjectError(format!("invalid file index {}", file_index))
+        })?;
+        file.code
+            .save_to_file(&file.path)
+            .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
+fn summarize_targets(targets: &[VariantTarget]) -> &VariantTarget {
+    targets
+        .iter()
+        .find(|target| target.previous_active != target.target_active)
+        .unwrap_or(&targets[0])
 }
 
 /// Tries to unset a variant through a match-replace sidecar document.
@@ -347,6 +400,12 @@ pub fn try_unset_variant_match_replace(
 
     let applied = crate::syntax::match_replace::unset_variant_in_match_replace(&content, variant)
         .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    log::debug!(
+        "match-replace unset variant '{}' matched {} scope(s), updated {} scope(s)",
+        variant,
+        applied.matched_scopes,
+        applied.updated_scopes
+    );
 
     Ok(Some(SetResult {
         file: applied.source_path,
@@ -1812,6 +1871,183 @@ fn calc(a: i32, b: i32) -> i32 {
         assert_eq!(set_via_sidecar.new_active, 1);
 
         let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn test_set_unset_variant_across_all_matching_scopes_same_file() {
+        let root = std::env::temp_dir().join(format!(
+            "marauders_api_multi_scope_same_file_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("same_file.rs");
+        let source = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| left */
+    a + b
+    /*|| bug_multi */
+    /*|
+    a - b
+    */
+    /* |*/
+    + {
+        /*| right */
+        a + b
+        /*|| bug_multi */
+        /*|
+        a - b
+        */
+        /* |*/
+    }
+}
+"#;
+        std::fs::write(&file, source).unwrap();
+
+        let mut project = Project::new(&root, None).unwrap();
+        set_variant(&mut project, "bug_multi").unwrap();
+
+        let listed = list_variations(&Project::new(&root, None).unwrap());
+        let scoped = listed
+            .iter()
+            .filter(|info| info.variants.iter().any(|v| v == "bug_multi"))
+            .collect::<Vec<_>>();
+        assert_eq!(scoped.len(), 2);
+        assert!(scoped.iter().all(|info| info.active > 0));
+        assert!(scoped
+            .iter()
+            .all(|info| info.variants[info.active - 1] == "bug_multi"));
+
+        let mut project = Project::new(&root, None).unwrap();
+        unset_variant(&mut project, "bug_multi").unwrap();
+        let listed_after_unset = list_variations(&Project::new(&root, None).unwrap());
+        let scoped_after_unset = listed_after_unset
+            .iter()
+            .filter(|info| info.variants.iter().any(|v| v == "bug_multi"))
+            .collect::<Vec<_>>();
+        assert!(scoped_after_unset.iter().all(|info| info.active == 0));
+
+        // Idempotent second unset should be a no-op with consistent state.
+        let mut project = Project::new(&root, None).unwrap();
+        unset_variant(&mut project, "bug_multi").unwrap();
+        let listed_after_second_unset = list_variations(&Project::new(&root, None).unwrap());
+        let scoped_after_second_unset = listed_after_second_unset
+            .iter()
+            .filter(|info| info.variants.iter().any(|v| v == "bug_multi"))
+            .collect::<Vec<_>>();
+        assert!(scoped_after_second_unset.iter().all(|info| info.active == 0));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_set_unset_variant_across_all_matching_scopes_cross_file() {
+        let root = std::env::temp_dir().join(format!(
+            "marauders_api_multi_scope_cross_file_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file_a = root.join("a.rs");
+        let file_b = root.join("b.rs");
+        let source = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| bug_cross */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+        std::fs::write(&file_a, source).unwrap();
+        std::fs::write(&file_b, source).unwrap();
+
+        let mut project = Project::new(&root, None).unwrap();
+        set_variant(&mut project, "bug_cross").unwrap();
+        let listed = list_variations(&Project::new(&root, None).unwrap());
+        let scoped = listed
+            .iter()
+            .filter(|info| info.variants.iter().any(|v| v == "bug_cross"))
+            .collect::<Vec<_>>();
+        assert_eq!(scoped.len(), 2);
+        assert!(scoped
+            .iter()
+            .all(|info| info.variants[info.active - 1] == "bug_cross"));
+
+        let mut project = Project::new(&root, None).unwrap();
+        unset_variant(&mut project, "bug_cross").unwrap();
+        let listed_after = list_variations(&Project::new(&root, None).unwrap());
+        let scoped_after = listed_after
+            .iter()
+            .filter(|info| info.variants.iter().any(|v| v == "bug_cross"))
+            .collect::<Vec<_>>();
+        assert!(scoped_after.iter().all(|info| info.active == 0));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_set_unset_unknown_variant_returns_not_found() {
+        let root = std::env::temp_dir().join(format!(
+            "marauders_api_unknown_variant_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("unknown.rs");
+        std::fs::write(
+            &file,
+            r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| add_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#,
+        )
+        .unwrap();
+
+        let mut project = Project::new(&root, None).unwrap();
+        let set_err = set_variant(&mut project, "does_not_exist").unwrap_err();
+        assert!(matches!(set_err, ApiError::VariantNotFound { .. }));
+
+        let mut project = Project::new(&root, None).unwrap();
+        let unset_err = unset_variant(&mut project, "does_not_exist").unwrap_err();
+        assert!(matches!(unset_err, ApiError::VariantNotFound { .. }));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_try_set_match_replace_scope_parse_error_contains_file_and_line() {
+        let source = std::env::temp_dir().join(format!(
+            "marauders_api_scope_parse_error_{}.rs",
+            std::process::id()
+        ));
+        std::fs::write(&source, "fn f() {\n    let x = 1;\n}\n").unwrap();
+        let sidecar = source.with_file_name(format!(
+            "{}.match_replace.json",
+            source.file_name().unwrap().to_string_lossy()
+        ));
+        let sidecar_content = format!(
+            r#"[{{"scope":"{}:line_two","match":"    let x = 1;","variants":[{{"name":"bug_parse","replacement":"    let x = 2;"}}]}}]"#,
+            source.to_string_lossy()
+        );
+        std::fs::write(&sidecar, sidecar_content).unwrap();
+
+        let err = try_set_variant_match_replace(&source, "bug_parse").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(&source.to_string_lossy().to_string()));
+        assert!(msg.contains("line_two"));
+
+        let _ = std::fs::remove_file(&source);
         let _ = std::fs::remove_file(&sidecar);
     }
 
