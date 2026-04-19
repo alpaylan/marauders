@@ -249,6 +249,51 @@ fn run_convert_command(path: &Path, to: &ConvertTarget) -> anyhow::Result<()> {
         ConvertTarget::MatchReplace => api::ConversionTarget::MatchReplace,
     };
 
+    if path.is_dir() {
+        let project = Project::new(path, None)?;
+        ensure_project_parseable(&project)?;
+        let mut files = api::list_variations(&project)
+            .into_iter()
+            .map(|info| info.path)
+            .collect::<Vec<_>>();
+        files.sort();
+        files.dedup();
+        if files.is_empty() {
+            log::info!("no mutation files found under '{}'", path.to_string_lossy());
+            return Ok(());
+        }
+
+        if target == api::ConversionTarget::RustFunctional {
+            // Enforce all-or-nothing behavior before mutating project files.
+            let mut preflight_errors = Vec::new();
+            for file in &files {
+                if let Err(err) = api::preflight_convert_file(file, target) {
+                    preflight_errors.push(format!("{}: {}", file.to_string_lossy(), err));
+                }
+            }
+            if !preflight_errors.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "project conversion preflight failed for {} file(s):\n{}",
+                    preflight_errors.len(),
+                    preflight_errors.join("\n")
+                ));
+            }
+        }
+
+        let total = files.len();
+        for file in files {
+            let converted =
+                api::convert_file(&file, target).map_err(|e| anyhow::anyhow!("{}", e))?;
+            log::info!("converted '{}'", converted.to_string_lossy());
+        }
+        log::info!(
+            "converted {} mutation file(s) under '{}'",
+            total,
+            path.to_string_lossy()
+        );
+        return Ok(());
+    }
+
     let converted = api::convert_file(path, target).map_err(|e| anyhow::anyhow!("{}", e))?;
     log::info!("converted '{}'", converted.to_string_lossy());
     Ok(())
@@ -633,6 +678,24 @@ mod tests {
         }
     }
 
+    fn unconvertible_use_tree_non_equivalent_fixture(scope: &str, variant: &str) -> String {
+        format!(
+            r#"
+use crate::a::{{
+    alpha,
+    /*| {scope} */
+    beta,
+    gamma,
+    /*|| {variant} */
+    /*|
+    beta,
+    */
+    /* |*/
+}};
+"#
+        )
+    }
+
     fn unique_temp_dir(stem: &str) -> PathBuf {
         let pid = std::process::id();
         let nanos = std::time::SystemTime::now()
@@ -668,6 +731,76 @@ mod tests {
         assert!(msg.contains(&file.to_string_lossy().to_string()));
         // parser diagnostics should include location metadata.
         assert!(msg.contains("-->") || msg.contains(":"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_run_convert_command_directory_functional_success() {
+        let root = unique_temp_dir("marauders_cli_convert_dir_ok");
+        let file = root.join("sample.rs");
+        std::fs::write(&file, marker_fixture("add_1", false)).unwrap();
+
+        run_convert_command(&root, &ConvertTarget::Functional).unwrap();
+
+        let converted = std::fs::read_to_string(&file).unwrap();
+        assert!(converted.contains("match () {"));
+        assert!(converted.contains("std::env::var(\"M_"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_run_convert_command_directory_functional_fails_on_partial_conversion() {
+        let root = unique_temp_dir("marauders_cli_convert_dir_partial_fail");
+        let good = root.join("a_good.rs");
+        let bad = root.join("z_bad.rs");
+        std::fs::write(
+            &bad,
+            unconvertible_use_tree_non_equivalent_fixture(
+                "scope_use_list_non_eq",
+                "bug_use_list_non_eq",
+            ),
+        )
+        .unwrap();
+        std::fs::write(&good, marker_fixture("add_1", false)).unwrap();
+
+        let err = run_convert_command(&root, &ConvertTarget::Functional).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("functional conversion is incomplete"));
+        assert!(msg.contains("scope_use_list_non_eq"));
+
+        // Good file sorts before bad file; preflight prevents partial conversion.
+        let good_after = std::fs::read_to_string(&good).unwrap();
+        assert!(good_after.contains("/*| add */"));
+        assert!(!good_after.contains("match () {"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_run_convert_command_directory_functional_reports_all_unconvertible_scopes() {
+        let root = unique_temp_dir("marauders_cli_convert_dir_all_failures");
+        let bad_use_1 = root.join("a_bad_use_1.rs");
+        let bad_use_2 = root.join("b_bad_use_2.rs");
+        std::fs::write(
+            &bad_use_1,
+            unconvertible_use_tree_non_equivalent_fixture("scope_use_list_non_eq_a", "bug_a"),
+        )
+        .unwrap();
+        std::fs::write(
+            &bad_use_2,
+            unconvertible_use_tree_non_equivalent_fixture("scope_use_list_non_eq_b", "bug_b"),
+        )
+        .unwrap();
+
+        let err = run_convert_command(&root, &ConvertTarget::Functional).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("project conversion preflight failed for 2 file(s):"));
+        assert!(msg.contains("a_bad_use_1.rs"));
+        assert!(msg.contains("scope_use_list_non_eq_a"));
+        assert!(msg.contains("b_bad_use_2.rs"));
+        assert!(msg.contains("scope_use_list_non_eq_b"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -273,20 +273,18 @@ fn apply_variant_in_match_replace(
             alternatives.push(variation.base_lines.clone());
             alternatives.extend(variation.variant_lines.clone());
 
-            let (start, end_exclusive, current_active) = locate_variation_region(
-                &lines,
-                variation.start_line,
-                &alternatives,
-            )
-            .ok_or_else(|| {
-                anyhow!(
-                    "unable to locate scope '{}' in '{}' (line {}) for variant '{}'",
-                    variation.variation.scope,
-                    source_path.display(),
-                    variation.start_line,
-                    variant_name
-                )
-            })?;
+            let (start, end_exclusive, current_active) =
+                locate_variation_region(&lines, variation.start_line, &alternatives).ok_or_else(
+                    || {
+                        anyhow!(
+                            "unable to locate scope '{}' in '{}' (line {}) for variant '{}'",
+                            variation.variation.scope,
+                            source_path.display(),
+                            variation.start_line,
+                            variant_name
+                        )
+                    },
+                )?;
 
             let desired_active = if set_variant {
                 scope_ref.variant_idx + 1
@@ -340,12 +338,8 @@ fn apply_variant_in_match_replace(
         std::fs::write(path, output)?;
     }
 
-    let (source_path, variation_name, previous_active, new_active) = representative.unwrap_or((
-        PathBuf::new(),
-        None,
-        0,
-        0,
-    ));
+    let (source_path, variation_name, previous_active, new_active) =
+        representative.unwrap_or((PathBuf::new(), None, 0, 0));
     Ok(MatchReplaceApplyResult {
         source_path,
         variation_name,
@@ -610,16 +604,21 @@ fn resolve_variations(document: MatchReplaceDocument) -> anyhow::Result<Vec<Reso
         .collect()
 }
 
-fn build_variant_index(resolved_variations: &[ResolvedVariation]) -> HashMap<String, Vec<ScopeRef>> {
+fn build_variant_index(
+    resolved_variations: &[ResolvedVariation],
+) -> HashMap<String, Vec<ScopeRef>> {
     let mut index: HashMap<String, Vec<ScopeRef>> = HashMap::new();
     for (variation_idx, variation) in resolved_variations.iter().enumerate() {
         for (variant_idx, variant) in variation.variation.variants.iter().enumerate() {
-            index.entry(variant.name.clone()).or_default().push(ScopeRef {
-                variation_idx,
-                variant_idx,
-                source_path: variation.source_path.clone(),
-                start_line: variation.start_line,
-            });
+            index
+                .entry(variant.name.clone())
+                .or_default()
+                .push(ScopeRef {
+                    variation_idx,
+                    variant_idx,
+                    source_path: variation.source_path.clone(),
+                    start_line: variation.start_line,
+                });
         }
     }
     index

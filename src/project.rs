@@ -21,12 +21,65 @@ pub struct Project {
     pub files: Vec<ProjectFile>,
     pub config: Option<ProjectConfig>,
     pub parse_errors: Vec<String>,
+    /// Standalone unified-diff patches discovered under `<root>/patches/*.patch`.
+    /// Each entry is one variation whose sole variant is the patch file stem;
+    /// activation invokes `git apply` on the patch. Applied-state is tracked
+    /// in `<root>/.marauders/active_patch`, not in source files.
+    pub patches: Vec<PatchVariation>,
 }
 
 #[derive(Debug)]
 pub struct ProjectFile {
     pub path: PathBuf,
     pub code: Code,
+}
+
+/// A mutation materialized as a standalone git patch under `<root>/patches/`.
+/// Unlike comment/preprocessor/match-replace variations that live inside a
+/// source file, a patch variation is activated by applying the diff and
+/// deactivated by reverse-applying it.
+#[derive(Debug, Clone)]
+pub struct PatchVariation {
+    /// Variant name — the patch file stem (e.g. `foo` for `patches/foo.patch`).
+    pub name: String,
+    /// Absolute path to the `.patch` file.
+    pub patch_file: PathBuf,
+}
+
+const ACTIVE_PATCH_FILE: &str = ".marauders/active_patch";
+
+fn load_patch_variations(root: &Path) -> Vec<PatchVariation> {
+    let patches_dir = root.join("patches");
+    if !patches_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let entries = match fs::read_dir(&patches_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "could not read patches dir '{}': {}",
+                patches_dir.display(),
+                err
+            );
+            return Vec::new();
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("patch") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        out.push(PatchVariation {
+            name: name.to_string(),
+            patch_file: path,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 /// Project configuration
@@ -51,6 +104,32 @@ impl Default for ProjectConfig {
             custom_languages: vec![],
         }
     }
+}
+
+fn file_extension(path: &Path) -> Option<&str> {
+    path.extension().and_then(|ext| ext.to_str())
+}
+
+fn is_supported_source_path(path: &Path, custom_languages: &Vec<CustomLanguage>) -> bool {
+    let Some(ext) = file_extension(path) else {
+        return false;
+    };
+    Language::extension_to_language(ext, custom_languages).is_some()
+}
+
+fn is_allowed_path_for_config(path: &Path, config: &ProjectConfig) -> bool {
+    let Some(ext) = file_extension(path) else {
+        return false;
+    };
+
+    config
+        .languages
+        .iter()
+        .any(|lang| lang.file_extension() == ext)
+        || config
+            .custom_languages
+            .iter()
+            .any(|custom| custom.extension == ext)
 }
 
 impl Project {
@@ -78,6 +157,7 @@ impl Project {
         let root = PathBuf::from(path);
 
         let mut overrides = OverrideBuilder::new(path);
+        let empty_custom_languages = vec![];
 
         if let Some(s) = pattern {
             overrides.add(s)?;
@@ -97,7 +177,11 @@ impl Project {
                     return None;
                 }
 
-                let code = Code::from_file(entry.path(), &vec![]);
+                if !is_supported_source_path(entry.path(), &empty_custom_languages) {
+                    return None;
+                }
+
+                let code = Code::from_file(entry.path(), &empty_custom_languages);
                 match code {
                     Ok(code) => Some(ProjectFile {
                         path: entry.path().to_path_buf(),
@@ -117,11 +201,14 @@ impl Project {
             })
             .collect();
 
+        let patches = load_patch_variations(&root);
+
         Ok(Project {
             root,
             files,
             config: None,
             parse_errors,
+            patches,
         })
     }
 
@@ -156,6 +243,9 @@ impl Project {
             if entry.file_type().unwrap().is_dir() {
                 continue;
             }
+            if !is_allowed_path_for_config(entry.path(), &config) {
+                continue;
+            }
             log::trace!("found file: {}", entry.path().to_string_lossy());
             let code = Code::from_file(entry.path(), &config.custom_languages);
             match code {
@@ -175,11 +265,14 @@ impl Project {
             }
         }
 
+        let patches = load_patch_variations(&root);
+
         Ok(Project {
             root,
             files,
             config: Some(config),
             parse_errors,
+            patches,
         })
     }
 
@@ -188,6 +281,40 @@ impl Project {
             path,
             Some(format!("**/*.{}", lang.file_extension()).as_str()),
         )
+    }
+}
+
+impl Project {
+    /// Returns the name of the currently-active patch variation, if any.
+    /// Reads `<root>/.marauders/active_patch`; returns `None` if the file is
+    /// missing, empty, or unreadable.
+    pub fn active_patch(&self) -> Option<String> {
+        let path = self.root.join(ACTIVE_PATCH_FILE);
+        let text = fs::read_to_string(&path).ok()?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    /// Writes (or clears) the active-patch state file. Creates the
+    /// `<root>/.marauders/` directory on demand.
+    pub fn set_active_patch(&self, variant: Option<&str>) -> std::io::Result<()> {
+        let state_dir = self.root.join(".marauders");
+        let path = state_dir.join("active_patch");
+        match variant {
+            Some(name) => {
+                fs::create_dir_all(&state_dir)?;
+                fs::write(&path, name)
+            }
+            None => match fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(err) => Err(err),
+            },
+        }
     }
 }
 
@@ -349,14 +476,20 @@ impl Project {
     /// Resets a project to the base
     pub fn reset(&mut self) -> anyhow::Result<()> {
         for file in self.files.iter_mut() {
+            let mut file_changed = false;
             file.code.spans.iter_mut().for_each(|span| {
                 if let SpanContent::Variation(v) = &mut span.content {
-                    v.active = 0;
-                    v.activate_base();
+                    if v.active != 0 {
+                        v.active = 0;
+                        v.activate_base();
+                        file_changed = true;
+                    }
                 }
             });
 
-            file.code.save_to_file(&file.path)?;
+            if file_changed {
+                file.code.save_to_file(&file.path)?;
+            }
         }
 
         Ok(())
@@ -442,6 +575,33 @@ mod tests {
                 .unwrap()
         ));
         assert!(!file_paths.contains(&PathBuf::from("test/rocq/BST.v").canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn test_project_with_config_ignores_non_source_files() {
+        let root = std::env::temp_dir().join(format!(
+            "marauders_project_config_ignore_nonsource_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("README.md"), "# test\n").unwrap();
+        std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+        let config = ProjectConfig {
+            languages: vec![Language::Rust],
+            ignore: vec![],
+            use_gitignore: false,
+            custom_languages: vec![],
+        };
+        let project = Project::with_config(&root, config).unwrap();
+        assert!(project.parse_errors.is_empty());
+        assert_eq!(project.files.len(), 1);
+        assert!(project.files[0].path.ends_with("main.rs"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -23,6 +23,176 @@ fn is_parseable_rust_source(_source: &str) -> bool {
     true
 }
 
+fn has_non_comment_rust_code(source: &str) -> bool {
+    let mut in_block_comment = false;
+
+    for line in source.lines() {
+        let mut rest = line;
+        loop {
+            if in_block_comment {
+                if let Some(end) = rest.find("*/") {
+                    in_block_comment = false;
+                    rest = &rest[(end + 2)..];
+                } else {
+                    break;
+                }
+            }
+
+            let trimmed = rest.trim_start();
+            if trimmed.is_empty() {
+                break;
+            }
+
+            if trimmed.starts_with("//") {
+                break;
+            }
+
+            if trimmed.starts_with("/*") {
+                if let Some(end) = trimmed.find("*/") {
+                    rest = &trimmed[(end + 2)..];
+                    continue;
+                }
+                in_block_comment = true;
+                break;
+            }
+
+            return true;
+        }
+    }
+
+    false
+}
+
+fn validate_rust_conversion_output(
+    original: &str,
+    converted: &str,
+    mode: &str,
+) -> Result<(), ApiError> {
+    if !is_parseable_rust_source(converted) {
+        return Err(ApiError::ProjectError(format!(
+            "converted Rust source is not parseable after {} conversion",
+            mode
+        )));
+    }
+
+    if has_non_comment_rust_code(original) && !has_non_comment_rust_code(converted) {
+        return Err(ApiError::ProjectError(format!(
+            "refusing to write Rust {} conversion output: all non-comment code would be removed",
+            mode
+        )));
+    }
+
+    Ok(())
+}
+
+fn write_checked_rust_conversion(
+    path: &Path,
+    original: &str,
+    converted: &str,
+    mode: &str,
+) -> Result<(), ApiError> {
+    validate_rust_conversion_output(original, converted, mode)?;
+    std::fs::write(path, converted)?;
+    Ok(())
+}
+
+fn has_comment_variations(source: &str) -> bool {
+    crate::syntax::comment::parse_code(source)
+        .map(|spans| {
+            spans
+                .iter()
+                .any(|span| matches!(span.content, SpanContent::Variation(_)))
+        })
+        .unwrap_or(false)
+}
+
+fn remaining_comment_variation_descriptors(
+    source: &str,
+) -> Result<Vec<(usize, String, Vec<String>)>, ApiError> {
+    let spans = crate::syntax::comment::parse_code(source)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    let mut remaining = Vec::new();
+    for span in spans {
+        if let SpanContent::Variation(variation) = span.content {
+            let name = variation.name.unwrap_or_else(|| "anonymous".to_string());
+            let variants = variation.variants.into_iter().map(|v| v.name).collect();
+            remaining.push((span.line, name, variants));
+        }
+    }
+    Ok(remaining)
+}
+
+fn render_checked_rust_functional_conversion(
+    path: &Path,
+    content: &str,
+) -> Result<String, ApiError> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .ok_or_else(|| ApiError::ProjectError("file extension is not valid unicode".to_string()))?;
+
+    if extension != "rs" {
+        return Err(ApiError::ProjectError(format!(
+            "Rust functional conversion is only supported for .rs files (got '.{}')",
+            extension
+        )));
+    }
+
+    let language = crate::syntax::functional::functional_language_for_extension(extension)
+        .ok_or_else(|| {
+            ApiError::ProjectError(format!(
+                "no functional mutation backend is available for '.{}'",
+                extension
+            ))
+        })?;
+    let spans = crate::syntax::comment::parse_code(content)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    let original_variation_count = spans
+        .iter()
+        .filter(|span| matches!(span.content, SpanContent::Variation(_)))
+        .count();
+    let converted = crate::syntax::functional::render_functional_code(language, content, &spans)
+        .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+    let remaining = remaining_comment_variation_descriptors(&converted)?;
+    if original_variation_count > 0 && !remaining.is_empty() {
+        let descriptors = remaining
+            .iter()
+            .map(|(line, name, variants)| format!("{name}@line {line} variants={variants:?}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ApiError::ProjectError(format!(
+            "functional conversion is incomplete for '{}': {} of {} variation(s) remain in comment syntax; unconvertible scopes: {}",
+            path.display(),
+            remaining.len(),
+            original_variation_count,
+            descriptors
+        )));
+    }
+    Ok(converted)
+}
+
+/// Performs conversion feasibility checks without writing files.
+///
+/// This is currently implemented for Rust functional conversion and is used by
+/// directory-level all-or-nothing preflight checks.
+pub fn preflight_convert_file(path: &Path, target: ConversionTarget) -> Result<(), ApiError> {
+    if !path.is_file() {
+        return Err(ApiError::ProjectError(format!(
+            "path '{}' is not a file",
+            path.display()
+        )));
+    }
+
+    match target {
+        ConversionTarget::RustFunctional => {
+            let content = std::fs::read_to_string(path)?;
+            let converted = render_checked_rust_functional_conversion(path, &content)?;
+            validate_rust_conversion_output(&content, &converted, "functional")
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Information about a variation in the project.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariationInfo {
@@ -152,6 +322,23 @@ pub fn list_variations(project: &Project) -> Vec<VariationInfo> {
         }
     }
 
+    let active_patch = project.active_patch();
+    for patch in &project.patches {
+        let active = if active_patch.as_deref() == Some(patch.name.as_str()) {
+            1
+        } else {
+            0
+        };
+        result.push(VariationInfo {
+            path: patch.patch_file.clone(),
+            line: 1,
+            name: Some(patch.name.clone()),
+            variants: vec![patch.name.clone()],
+            active,
+            tags: vec!["patch".to_string()],
+        });
+    }
+
     result
 }
 
@@ -167,15 +354,23 @@ pub fn list_variations(project: &Project) -> Vec<VariationInfo> {
 /// * `Ok(SetResult)` - Information about what was changed
 /// * `Err(ApiError)` - If the variant was not found or is already active
 pub fn set_variant(project: &mut Project, variant: &str) -> Result<SetResult, ApiError> {
-    let (targets, all_variants) = collect_variant_targets(project, variant, true);
+    let (targets, mut all_variants) = collect_variant_targets(project, variant, true);
     if targets.is_empty() {
+        // Patch-backed variant?
+        if let Some(patch_idx) = project.patches.iter().position(|p| p.name == variant) {
+            return set_patch_variant(project, patch_idx);
+        }
+        all_variants.extend(project.patches.iter().map(|p| p.name.clone()));
         return Err(ApiError::VariantNotFound {
             variant: variant.to_string(),
             available: all_variants,
         });
     }
 
-    if targets.iter().all(|target| target.previous_active == target.target_active) {
+    if targets
+        .iter()
+        .all(|target| target.previous_active == target.target_active)
+    {
         return Err(ApiError::AlreadyActive {
             variant: variant.to_string(),
         });
@@ -191,6 +386,57 @@ pub fn set_variant(project: &mut Project, variant: &str) -> Result<SetResult, Ap
     })
 }
 
+fn set_patch_variant(project: &mut Project, patch_idx: usize) -> Result<SetResult, ApiError> {
+    let patch = project.patches[patch_idx].clone();
+    let currently_active = project.active_patch();
+    if currently_active.as_deref() == Some(patch.name.as_str()) {
+        return Err(ApiError::AlreadyActive {
+            variant: patch.name.clone(),
+        });
+    }
+    if let Some(other) = currently_active {
+        return Err(ApiError::ProjectError(format!(
+            "another patch variant '{other}' is currently active; reset before setting '{}'",
+            patch.name
+        )));
+    }
+
+    run_git_apply(&project.root, &patch.patch_file, false)?;
+    project
+        .set_active_patch(Some(&patch.name))
+        .map_err(|e| ApiError::IoError(e.to_string()))?;
+
+    Ok(SetResult {
+        file: patch.patch_file.clone(),
+        variation: Some(patch.name.clone()),
+        previous_active: 0,
+        new_active: 1,
+    })
+}
+
+fn run_git_apply(root: &Path, patch_file: &Path, reverse: bool) -> Result<(), ApiError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("apply");
+    if reverse {
+        cmd.arg("-R");
+    }
+    cmd.arg(patch_file);
+    cmd.current_dir(root);
+    let output = cmd
+        .output()
+        .map_err(|e| ApiError::IoError(format!("failed to run git apply: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(ApiError::ProjectError(format!(
+            "git apply{} {} failed: {}",
+            if reverse { " -R" } else { "" },
+            patch_file.display(),
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Unsets a variant (resets its variation to base), returning what was changed.
 ///
 /// # Arguments
@@ -203,8 +449,12 @@ pub fn set_variant(project: &mut Project, variant: &str) -> Result<SetResult, Ap
 /// * `Ok(SetResult)` - Information about what was changed
 /// * `Err(ApiError)` - If the variant was not found
 pub fn unset_variant(project: &mut Project, variant: &str) -> Result<SetResult, ApiError> {
-    let (targets, all_variants) = collect_variant_targets(project, variant, false);
+    let (targets, mut all_variants) = collect_variant_targets(project, variant, false);
     if targets.is_empty() {
+        if let Some(patch_idx) = project.patches.iter().position(|p| p.name == variant) {
+            return unset_patch_variant(project, patch_idx);
+        }
+        all_variants.extend(project.patches.iter().map(|p| p.name.clone()));
         return Err(ApiError::VariantNotFound {
             variant: variant.to_string(),
             available: all_variants,
@@ -218,6 +468,33 @@ pub fn unset_variant(project: &mut Project, variant: &str) -> Result<SetResult, 
         variation: summary.variation.clone(),
         previous_active: summary.previous_active,
         new_active: summary.target_active,
+    })
+}
+
+fn unset_patch_variant(project: &mut Project, patch_idx: usize) -> Result<SetResult, ApiError> {
+    let patch = project.patches[patch_idx].clone();
+    let currently_active = project.active_patch();
+    if currently_active.as_deref() != Some(patch.name.as_str()) {
+        // Already at base — unset on a non-active variant is a no-op in the
+        // source pathway, so mirror that: return a no-op SetResult.
+        return Ok(SetResult {
+            file: patch.patch_file.clone(),
+            variation: Some(patch.name.clone()),
+            previous_active: 0,
+            new_active: 0,
+        });
+    }
+
+    run_git_apply(&project.root, &patch.patch_file, true)?;
+    project
+        .set_active_patch(None)
+        .map_err(|e| ApiError::IoError(e.to_string()))?;
+
+    Ok(SetResult {
+        file: patch.patch_file.clone(),
+        variation: Some(patch.name.clone()),
+        previous_active: 1,
+        new_active: 0,
     })
 }
 
@@ -358,9 +635,10 @@ fn apply_variant_targets(project: &mut Project, targets: &[VariantTarget]) -> Re
     touched_files.sort_unstable();
 
     for file_index in touched_files {
-        let file = project.files.get(file_index).ok_or_else(|| {
-            ApiError::ProjectError(format!("invalid file index {}", file_index))
-        })?;
+        let file = project
+            .files
+            .get(file_index)
+            .ok_or_else(|| ApiError::ProjectError(format!("invalid file index {}", file_index)))?;
         file.code
             .save_to_file(&file.path)
             .map_err(|e| ApiError::ProjectError(e.to_string()))?;
@@ -458,6 +736,7 @@ pub fn reset_all(project: &mut Project) -> Result<Vec<SetResult>, ApiError> {
     let mut results = Vec::new();
 
     for file in project.files.iter_mut() {
+        let mut file_changed = false;
         for span in file.code.spans.iter_mut() {
             if let SpanContent::Variation(v) = &mut span.content {
                 if v.active != 0 {
@@ -466,6 +745,7 @@ pub fn reset_all(project: &mut Project) -> Result<Vec<SetResult>, ApiError> {
 
                     v.active = 0;
                     v.activate_base();
+                    file_changed = true;
 
                     results.push(SetResult {
                         file: file.path.clone(),
@@ -477,9 +757,33 @@ pub fn reset_all(project: &mut Project) -> Result<Vec<SetResult>, ApiError> {
             }
         }
 
-        file.code
-            .save_to_file(&file.path)
-            .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+        if file_changed {
+            file.code
+                .save_to_file(&file.path)
+                .map_err(|e| ApiError::ProjectError(e.to_string()))?;
+        }
+    }
+
+    if let Some(active_name) = project.active_patch() {
+        if let Some(patch_idx) = project.patches.iter().position(|p| p.name == active_name) {
+            let patch = project.patches[patch_idx].clone();
+            run_git_apply(&project.root, &patch.patch_file, true)?;
+            project
+                .set_active_patch(None)
+                .map_err(|e| ApiError::IoError(e.to_string()))?;
+            results.push(SetResult {
+                file: patch.patch_file,
+                variation: Some(patch.name),
+                previous_active: 1,
+                new_active: 0,
+            });
+        } else {
+            // State file points at a patch that no longer exists on disk;
+            // clear the stale state rather than leaving it dangling.
+            project
+                .set_active_patch(None)
+                .map_err(|e| ApiError::IoError(e.to_string()))?;
+        }
     }
 
     Ok(results)
@@ -506,34 +810,9 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
 
     match target {
         ConversionTarget::RustFunctional => {
-            let extension = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .ok_or_else(|| {
-                    ApiError::ProjectError("file extension is not valid unicode".to_string())
-                })?;
-
-            if extension != "rs" {
-                return Err(ApiError::ProjectError(format!(
-                    "Rust functional conversion is only supported for .rs files (got '.{}')",
-                    extension
-                )));
-            }
-
             let content = std::fs::read_to_string(path)?;
-            let language = crate::syntax::functional::functional_language_for_extension(extension)
-                .ok_or_else(|| {
-                    ApiError::ProjectError(format!(
-                        "no functional mutation backend is available for '.{}'",
-                        extension
-                    ))
-                })?;
-            let spans = crate::syntax::comment::parse_code(&content)
-                .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-            let converted =
-                crate::syntax::functional::render_functional_code(language, &content, &spans)
-                    .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-            std::fs::write(path, converted)?;
+            let converted = render_checked_rust_functional_conversion(path, &content)?;
+            write_checked_rust_conversion(path, &content, &converted, "functional")?;
         }
         ConversionTarget::RustComment => {
             let extension = path
@@ -561,7 +840,7 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
             let converted =
                 crate::syntax::functional::render_comment_code_from_functional(language, &content)
                     .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-            std::fs::write(path, converted)?;
+            write_checked_rust_conversion(path, &content, &converted, "comment")?;
         }
         ConversionTarget::Preprocessor => {
             let content = std::fs::read_to_string(path)?;
@@ -640,10 +919,14 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
                                 language, &content,
                             )
                             .map_err(|e| ApiError::ProjectError(e.to_string()))?;
-                        std::fs::write(path, converted)?;
+                        write_checked_rust_conversion(path, &content, &converted, "comment")?;
                         return Ok(path.to_path_buf());
                     }
                 }
+            }
+
+            if has_comment_variations(&content) {
+                return Ok(path.to_path_buf());
             }
 
             if crate::syntax::preprocessor::looks_like_mutations(&content) {
@@ -1651,6 +1934,77 @@ fn union_(l: i32, r: i32) -> i32 {
     }
 
     #[test]
+    fn test_convert_file_rust_functional_fails_on_partial_conversion() {
+        let original = r#"
+use crate::a::{
+    alpha,
+    /*| scope_use_list_non_eq */
+    beta,
+    gamma,
+    /*|| bug_use_list_non_eq */
+    /*|
+    beta,
+    */
+    /* |*/
+};
+"#;
+        let tmp = std::env::temp_dir().join(format!(
+            "marauders_convert_partial_fail_{}.rs",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, original).unwrap();
+
+        let err = convert_file(&tmp, ConversionTarget::RustFunctional)
+            .expect_err("partial functional conversion should be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("functional conversion is incomplete"));
+        assert!(msg.contains("scope_use_list_non_eq"));
+
+        let after = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(after, original);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_rust_conversion_write_guard_rejects_code_erasure() {
+        let original = r#"
+fn keep_me(a: i32, b: i32) -> i32 {
+    /*| keep_me */
+    a + b
+    /*|| keep_me_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+        let collapsed = r#"
+/*| keep_me */
+/*|| keep_me_1 */
+/*|
+*/
+/* |*/
+"#;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "marauders_convert_guard_{}_erase.rs",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, original).unwrap();
+
+        let err = write_checked_rust_conversion(&tmp, original, collapsed, "functional")
+            .expect_err("guard should reject destructive conversion output");
+        let msg = format!("{err}");
+        assert!(msg.contains("all non-comment code would be removed"));
+
+        let after = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(after, original);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
     fn test_convert_file_preprocessor_roundtrip() {
         let original = r#"
 fn calc(a: i32, b: i32) -> i32 {
@@ -1690,6 +2044,69 @@ fn calc(a: i32, b: i32) -> i32 {
         assert!(roundtrip.contains("/*|| add_2 */"));
 
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_convert_file_comment_noops_when_already_comment_syntax() {
+        let original = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| add_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+        let tmp = std::env::temp_dir().join(format!(
+            "marauders_convert_comment_noop_{}.rs",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, original).unwrap();
+
+        let result = convert_file(&tmp, ConversionTarget::Comment).unwrap();
+        assert_eq!(result, tmp);
+        let after = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(after, original);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_reset_all_does_not_rewrite_functional_file_with_no_active_variants() {
+        let root = std::env::temp_dir().join(format!(
+            "marauders_reset_functional_no_rewrite_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let tmp = root.join("sample.rs");
+        let original = r#"
+fn calc(a: i32, b: i32) -> i32 {
+    /*| add */
+    a + b
+    /*|| add_1 */
+    /*|
+    a - b
+    */
+    /* |*/
+}
+"#;
+        std::fs::write(&tmp, original).unwrap();
+
+        convert_file(&tmp, ConversionTarget::RustFunctional).unwrap();
+        let functional_before_reset = std::fs::read_to_string(&tmp).unwrap();
+
+        let mut project = Project::with_pattern(&root, Some("**/*.rs")).unwrap();
+        let results = reset_all(&mut project).unwrap();
+        assert!(results.is_empty());
+
+        let functional_after_reset = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(functional_after_reset, functional_before_reset);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1936,7 +2353,9 @@ fn calc(a: i32, b: i32) -> i32 {
             .iter()
             .filter(|info| info.variants.iter().any(|v| v == "bug_multi"))
             .collect::<Vec<_>>();
-        assert!(scoped_after_second_unset.iter().all(|info| info.active == 0));
+        assert!(scoped_after_second_unset
+            .iter()
+            .all(|info| info.active == 0));
 
         let _ = std::fs::remove_dir_all(&root);
     }

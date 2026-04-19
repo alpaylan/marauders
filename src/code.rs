@@ -171,13 +171,24 @@ impl Code {
                         functional_language,
                         &file_content,
                     ) {
-                        let functional_spans = crate::syntax::functional::parse_variations(
+                        let mut functional_spans = crate::syntax::functional::parse_variations(
                             functional_language,
                             &file_content,
                         );
                         if functional_spans.is_empty() {
                             crate::syntax::comment::parse_code(&file_content)?
                         } else {
+                            let comment_variations = crate::syntax::comment::parse_code(
+                                &file_content,
+                            )?
+                            .into_iter()
+                            .filter(|span| matches!(span.content, SpanContent::Variation(_)));
+                            for span in comment_variations {
+                                if !functional_spans.contains(&span) {
+                                    functional_spans.push(span);
+                                }
+                            }
+                            functional_spans.sort_by_key(|span| span.line);
                             functional_spans
                         }
                     } else {
@@ -276,5 +287,71 @@ impl Code {
         }
 
         self.save_to_file(&self.path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Code, SpanContent};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn write_temp_rust_source(prefix: &str, source: &str) -> PathBuf {
+        let unique = format!(
+            "{prefix}_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after UNIX_EPOCH")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(format!("{unique}.rs"));
+        fs::write(&path, source).expect("failed to write temporary rust source");
+        path
+    }
+
+    #[test]
+    fn test_from_file_merges_rust_functional_and_comment_variations() {
+        let source = r#"
+fn functional(k: i32, k2: i32) -> i32 {
+    match std::env::var("M_insert").as_deref() {
+        Ok("base") | Err(_) => {
+            k + k2
+        },
+        Ok("insert_1") => {
+            k - k2
+        },
+        _ => panic!("Unknown variation"),
+    }
+}
+
+fn comment(x: i32) -> i32 {
+    /* | plus_bug */
+    x + 1
+    /* || plus_bug_1 */
+    /*|
+    x - 1
+    */
+    /* | */
+}
+"#;
+        let path = write_temp_rust_source("marauders_mixed_syntax", source);
+        let code = Code::from_file(&path, &vec![]).expect("mixed-syntax rust file should parse");
+        let variation_names = code
+            .spans
+            .iter()
+            .filter_map(|span| match &span.content {
+                SpanContent::Variation(variation) => variation.name.clone(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let _ = fs::remove_file(path);
+
+        assert_eq!(variation_names.len(), 2);
+        assert!(variation_names.contains(&"insert".to_string()));
+        assert!(variation_names.contains(&"plus_bug".to_string()));
     }
 }

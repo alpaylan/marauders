@@ -1,6 +1,8 @@
 NL = _{ "\n" | "\r" }
 
 MUTANT_MARKER = _{ "!" | "|" }
+SINGLE_HSPACE = _{ " " | "\t" }
+OPT_SINGLE_HSPACE = _{ SINGLE_HSPACE? }
 
 code = { (mutation | line)* ~ last_line? }
 
@@ -14,32 +16,33 @@ mutation = { variation }
 variation = { variation_header ~ NL ~ base ~ variant+ ~ variation_end ~ NL? }
 
 variation_header       =  { indent? ~ variation_begin_marker ~ WHITE_SPACE ~ (identifier ~ WHITE_SPACE)? ~ (tags ~ WHITE_SPACE)? ~ comment_end }
-variation_begin_marker = @{ comment_begin ~ MUTANT_MARKER }
-variation_end          = @{ indent? ~ comment_begin ~ WHITE_SPACE ~ MUTANT_MARKER ~ comment_end }
+variation_begin_marker = @{ comment_begin ~ OPT_SINGLE_HSPACE ~ MUTANT_MARKER }
+variation_end          = @{ indent? ~ comment_begin ~ OPT_SINGLE_HSPACE ~ MUTANT_MARKER ~ OPT_SINGLE_HSPACE ~ comment_end }
 
 base = { variant_body? }
 
 variant = { variant_header ~ NL ~ variant_body }
 
-variant_begin_marker = @{ comment_begin ~ MUTANT_MARKER{2} }
+variant_begin_marker = @{ comment_begin ~ OPT_SINGLE_HSPACE ~ MUTANT_MARKER{2} }
 variant_header       =  { indent? ~ variant_begin_marker ~ WHITE_SPACE ~ identifier ~ WHITE_SPACE ~ comment_end }
 
 variant_body = { inactive_multi_line_variant_body | inactive_single_line_variant_body | active_variant_body }
 
 inactive_single_line_variant_body =  { indent? ~ variant_body_begin_marker ~ single_line_comment_text ~ comment_end ~ NL }
 inactive_multi_line_variant_body  =  { indent? ~ variant_body_begin_marker ~ NL ~ comment_text ~ indent? ~ block_comment_end ~ NL }
-variant_body_begin_marker         = @{ comment_begin ~ MUTANT_MARKER ~ !MUTANT_MARKER }
+variant_body_begin_marker         = @{ comment_begin ~ OPT_SINGLE_HSPACE ~ MUTANT_MARKER ~ !MUTANT_MARKER }
 
 active_variant_body = { line+ }
 
 // Tags ::= “[“ (Tag “,”)* Tag “]”
 tags = { "[" ~ WHITE_SPACE? ~ tag ~ (WHITE_SPACE? ~ "," ~ WHITE_SPACE? ~ tag)* ~ WHITE_SPACE? ~ "]" }
 
-// Tag ::= Identifier
-tag = { identifier }
+// Tag ::= alphanumeric string, allowing hyphens and digits (e.g. "off-by-one", "issue-143")
+tag = @{ (ASCII_ALPHA | ASCII_DIGIT | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "-")* }
 
 comment_begin = { "(*" | "/*" | "{-" | "#|" | "//" | "\"\"\"" }
-comment_end   = { "*)" | "*/" | "-}" | "|#" | "//" | "\"\"\"" }
+line_comment_end = @{ "//" ~ SINGLE_HSPACE* ~ &(NL | EOI) }
+comment_end   = { "*)" | "*/" | "-}" | "|#" | line_comment_end | "\"\"\"" }
 block_comment_end = { "*)" | "*/" | "-}" | "|#" | "\"\"\"" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }

@@ -365,6 +365,17 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_variation_header_line_comment() {
+        let result = Parser::parse(Rule::variation_header, r#"//! delete_4 //"#)
+            .unwrap()
+            .next()
+            .unwrap();
+        let result = parse_variation_header(result);
+
+        assert_eq!(result.0, Some("delete_4".to_string()));
+    }
+
+    #[test]
     fn test_parse_variation_header_noid() {
         let result = Parser::parse(Rule::variation_header, r#"(*! *)"#)
             .unwrap()
@@ -387,14 +398,32 @@ mod tests {
     }
 
     #[test]
-    fn test_variation_end_whitespace() {
-        let result = Parser::parse(Rule::variation_end, r#"(*! *)"#);
+    fn test_variation_end_allows_space_before_comment_end() {
+        let result = Parser::parse(Rule::variation_end, r#"(*! *)"#)
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(result.as_str(), "(*! *)");
+    }
+
+    #[test]
+    fn test_variation_end_allows_optional_space_around_marker() {
+        let result = Parser::parse(Rule::variation_end, r#"(* ! *)"#)
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(result.as_str(), "(* ! *)");
+    }
+
+    #[test]
+    fn test_variation_end_rejects_more_than_one_space_after_comment_begin() {
+        let result = Parser::parse(Rule::variation_end, r#"(*  !*)"#);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_variation_end_whitespace2() {
-        let result = Parser::parse(Rule::variation_end, r#"(* ! *)"#);
+    fn test_variation_end_rejects_more_than_one_space_before_comment_end() {
+        let result = Parser::parse(Rule::variation_end, r#"(* !  *)"#);
         assert!(result.is_err());
     }
 
@@ -440,6 +469,18 @@ else join l r
     }
 
     #[test]
+    fn test_variant_header_allows_single_space_after_comment_begin() {
+        let result = Parser::parse(Rule::variant_header, r#"  (* !! delete_4 *)"#)
+            .unwrap()
+            .next()
+            .unwrap();
+
+        let (name, indent) = parse_variant_header(result);
+        assert_eq!(name, "delete_4");
+        assert_eq!(indent, "  ");
+    }
+
+    #[test]
     fn test_variant_body_begin() {
         let result = Parser::parse(Rule::variant_body_begin_marker, r#"(*!"#)
             .unwrap()
@@ -450,6 +491,16 @@ else join l r
     }
 
     #[test]
+    fn test_variant_body_begin_allows_single_space_after_comment_begin() {
+        let result = Parser::parse(Rule::variant_body_begin_marker, r#"(* !"#)
+            .unwrap()
+            .next()
+            .unwrap();
+
+        assert_eq!(result.as_str(), "(* !");
+    }
+
+    #[test]
     fn test_variant_body_end() {
         let result = Parser::parse(Rule::comment_end, r#"*)"#)
             .unwrap()
@@ -457,6 +508,30 @@ else join l r
             .unwrap();
 
         assert_eq!(result.as_str(), "*)");
+    }
+
+    #[test]
+    fn test_rustfmt_spaced_markers_parse_for_c_style_comments() {
+        let result = parse_code(
+            r#"fn f() {
+    /* | scope */
+    let x = 0;
+    /* || scope_1 */
+    /* |
+    let x = 1;
+    */
+    /* | */
+}"#,
+        )
+        .unwrap();
+
+        if let SpanContent::Variation(v) = &result[1].content {
+            assert_eq!(v.name.as_deref(), Some("scope"));
+            assert_eq!(v.variants.len(), 1);
+            assert_eq!(v.variants[0].name, "scope_1");
+        } else {
+            panic!("unexpected span content {:?}", result[1].content);
+        }
     }
 
     #[test]
@@ -596,6 +671,25 @@ else join l r
             .collect::<Vec<String>>();
 
         assert_eq!(tags, vec!["new".to_string(), "easy".to_string()]);
+    }
+
+    #[test]
+    fn test_tags_with_hyphens_and_numbers() {
+        let input = r#"[btree, off-by-one, issue-143]"#;
+        let result = Parser::parse(Rule::tags, input).unwrap().next().unwrap();
+        let tags = result
+            .into_inner()
+            .map(|pair| pair.as_str().to_string())
+            .collect::<Vec<String>>();
+
+        assert_eq!(
+            tags,
+            vec![
+                "btree".to_string(),
+                "off-by-one".to_string(),
+                "issue-143".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -962,5 +1056,20 @@ end."#,
         let result = parse_code("const DEFAULT_PRECISION: u64 = 100;").unwrap();
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0].content, SpanContent::Line(_)));
+    }
+
+    #[test]
+    fn test_rust_inner_doc_comment_line_does_not_fail_parser() {
+        let result = parse_code(
+            r#"//! /// That's the 200MiB size limit we allow LMDB to grow.
+fn main() {}
+"#,
+        )
+        .unwrap();
+
+        assert!(!result.is_empty());
+        assert!(result
+            .iter()
+            .all(|span| matches!(span.content, SpanContent::Line(_))));
     }
 }

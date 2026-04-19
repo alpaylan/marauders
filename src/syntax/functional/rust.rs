@@ -394,32 +394,64 @@ pub(crate) fn render_rust_functional_code(input: &str, spans: &[Span]) -> anyhow
             if variation_is_inert_marker(&location.variation) {
                 continue;
             }
+            if let Some(replacement) = try_render_else_if_boundary_variation(&location.variation) {
+                if replacement_keeps_file_parseable(
+                    &rendered,
+                    location.block_range.clone(),
+                    &replacement,
+                ) {
+                    replacements.push(TextReplacement {
+                        range: location.block_range,
+                        replacement,
+                    });
+                    continue;
+                }
+            }
+            if variation_has_equivalent_variants(&location.variation) {
+                let mut replacement = location.variation.base.lines().join("\n");
+                if !replacement.is_empty() {
+                    replacement.push('\n');
+                }
+                if replacement_keeps_file_parseable(
+                    &rendered,
+                    location.block_range.clone(),
+                    &replacement,
+                ) {
+                    replacements.push(TextReplacement {
+                        range: location.block_range,
+                        replacement,
+                    });
+                    continue;
+                }
+            }
+            let closure_hazard = variation_is_expr_closure_hazard(&location.variation);
             anonymous_count += 1;
-            let direct = render_rust_functional_variation(&location.variation, anonymous_count);
-            if replacement_keeps_file_parseable(&rendered, location.block_range.clone(), &direct) {
-                replacements.push(TextReplacement {
-                    range: location.block_range,
-                    replacement: direct,
-                });
-                continue;
+            if !closure_hazard {
+                let direct = render_rust_functional_variation(&location.variation, anonymous_count);
+                if replacement_keeps_file_parseable(
+                    &rendered,
+                    location.block_range.clone(),
+                    &direct,
+                ) {
+                    replacements.push(TextReplacement {
+                        range: location.block_range,
+                        replacement: direct,
+                    });
+                    continue;
+                }
             }
 
-            let Some(lifted) = lift_variation_to_node(&rendered, &location, &candidates) else {
-                return Err(anyhow::anyhow!(
-                    "could not find a valid enclosing Rust node for variation at line {}",
-                    location.line
-                ));
+            let Some(lifted) =
+                lift_variation_to_node(&rendered, &location, &candidates, !closure_hazard)
+            else {
+                continue;
             };
 
             let lifted_rendered =
                 render_rust_functional_variation(&lifted.variation, anonymous_count);
             if !replacement_keeps_file_parseable(&rendered, lifted.range.clone(), &lifted_rendered)
             {
-                return Err(anyhow::anyhow!(
-                    "lifted variation at line {} still does not produce valid Rust syntax (range {:?})",
-                    location.line,
-                    lifted.range
-                ));
+                continue;
             }
 
             replacements.push(TextReplacement {
@@ -699,6 +731,8 @@ struct VariationLocation {
 enum RustNodeKind {
     Expr,
     Arm,
+    Stmt,
+    Item,
 }
 
 #[derive(Clone, Debug)]
@@ -743,6 +777,16 @@ impl<'a> RustNodeCollector<'a> {
 }
 
 impl<'ast> Visit<'ast> for RustNodeCollector<'_> {
+    fn visit_item(&mut self, node: &'ast syn::Item) {
+        self.push_candidate(RustNodeKind::Item, node.span());
+        visit::visit_item(self, node);
+    }
+
+    fn visit_stmt(&mut self, node: &'ast syn::Stmt) {
+        self.push_candidate(RustNodeKind::Stmt, node.span());
+        visit::visit_stmt(self, node);
+    }
+
     fn visit_expr(&mut self, node: &'ast syn::Expr) {
         self.push_candidate(RustNodeKind::Expr, node.span());
         visit::visit_expr(self, node);
@@ -875,6 +919,59 @@ fn variation_is_inert_marker(variation: &Variation) -> bool {
             .all(|variant| variant.lines().iter().all(|line| line.trim().is_empty()))
 }
 
+fn variation_has_equivalent_variants(variation: &Variation) -> bool {
+    fn normalize(lines: &[String]) -> String {
+        lines
+            .join("\n")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    let base = normalize(&variation.base.lines());
+    !variation.variants.is_empty()
+        && variation
+            .variants
+            .iter()
+            .all(|variant| normalize(&variant.lines()) == base)
+}
+
+fn variation_is_expr_closure_hazard(variation: &Variation) -> bool {
+    let mut exprs = Vec::new();
+
+    let base_expr = match syn::parse_str::<syn::Expr>(&variation.base.lines().join("\n")) {
+        Ok(expr) => expr,
+        Err(_) => return false,
+    };
+    exprs.push(base_expr);
+
+    for variant in &variation.variants {
+        let expr = match syn::parse_str::<syn::Expr>(&variant.lines().join("\n")) {
+            Ok(expr) => expr,
+            Err(_) => return false,
+        };
+        exprs.push(expr);
+    }
+
+    exprs.iter().any(expr_contains_closure)
+}
+
+fn expr_contains_closure(expr: &syn::Expr) -> bool {
+    struct ClosureVisitor {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for ClosureVisitor {
+        fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
+            self.found = true;
+            visit::visit_expr_closure(self, node);
+        }
+    }
+
+    let mut visitor = ClosureVisitor { found: false };
+    visitor.visit_expr(expr);
+    visitor.found
+}
+
 fn base_code_line_bounds(
     index: &SourceIndex,
     start_line: usize,
@@ -961,6 +1058,242 @@ fn lines_from_text(text: &str) -> Vec<String> {
     text.lines().map(ToString::to_string).collect()
 }
 
+#[derive(Clone)]
+struct LocalBindingStmt {
+    pat: String,
+    init_expr: String,
+}
+
+fn parse_local_binding_stmt(lines: &[String]) -> Option<LocalBindingStmt> {
+    let text = lines.join("\n");
+    let stmt = syn::parse_str::<syn::Stmt>(&text).ok()?;
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+
+    let init = local.init?;
+    if init.diverge.is_some() {
+        return None;
+    }
+
+    Some(LocalBindingStmt {
+        pat: local.pat.to_token_stream().to_string(),
+        init_expr: init.expr.to_token_stream().to_string(),
+    })
+}
+
+#[derive(Clone)]
+enum FunctionItem {
+    Free(syn::ItemFn),
+    Method(syn::ImplItemFn),
+}
+
+impl FunctionItem {
+    fn compatible_with(&self, other: &FunctionItem) -> bool {
+        match self {
+            FunctionItem::Free(left) => match other {
+                FunctionItem::Free(right) => signatures_compatible(&left.sig, &right.sig),
+                _ => false,
+            },
+            FunctionItem::Method(left) => match other {
+                FunctionItem::Method(right) => signatures_compatible(&left.sig, &right.sig),
+                _ => false,
+            },
+        }
+    }
+
+    fn block(&self) -> &syn::Block {
+        match self {
+            FunctionItem::Free(item) => &item.block,
+            FunctionItem::Method(item) => &item.block,
+        }
+    }
+
+    fn set_block(&mut self, block: syn::Block) {
+        match self {
+            FunctionItem::Free(item) => item.block = Box::new(block),
+            FunctionItem::Method(item) => item.block = block,
+        }
+    }
+}
+
+fn signatures_compatible(left: &syn::Signature, right: &syn::Signature) -> bool {
+    if left.ident != right.ident
+        || left.asyncness.is_some() != right.asyncness.is_some()
+        || left.constness.is_some() != right.constness.is_some()
+        || left.unsafety.is_some() != right.unsafety.is_some()
+        || left.variadic.is_some() != right.variadic.is_some()
+        || left.generics.to_token_stream().to_string()
+            != right.generics.to_token_stream().to_string()
+        || left.output.to_token_stream().to_string() != right.output.to_token_stream().to_string()
+        || left.inputs.len() != right.inputs.len()
+    {
+        return false;
+    }
+
+    left.inputs
+        .iter()
+        .zip(right.inputs.iter())
+        .all(|(li, ri)| match (li, ri) {
+            (syn::FnArg::Receiver(lr), syn::FnArg::Receiver(rr)) => {
+                lr.reference.is_some() == rr.reference.is_some()
+                    && lr.mutability.is_some() == rr.mutability.is_some()
+            }
+            (syn::FnArg::Typed(lt), syn::FnArg::Typed(rt)) => {
+                lt.ty.to_token_stream().to_string() == rt.ty.to_token_stream().to_string()
+            }
+            _ => false,
+        })
+}
+
+fn parse_function_item(lines: &[String]) -> Option<FunctionItem> {
+    let text = lines.join("\n");
+    if let Ok(item_fn) = syn::parse_str::<syn::ItemFn>(&text) {
+        return Some(FunctionItem::Free(item_fn));
+    }
+    if let Ok(method_fn) = syn::parse_str::<syn::ImplItemFn>(&text) {
+        return Some(FunctionItem::Method(method_fn));
+    }
+    None
+}
+
+fn block_body_source(block: &syn::Block) -> String {
+    block
+        .stmts
+        .iter()
+        .map(|stmt| stmt.to_token_stream().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn try_render_else_if_boundary_variation(variation: &Variation) -> Option<String> {
+    if variation.variants.len() != 1 {
+        return None;
+    }
+    let variant = &variation.variants[0];
+    if variant.lines().iter().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with("//")
+    }) {
+        return None;
+    }
+
+    let mut base_lines = variation.base.lines();
+    let first_idx = base_lines.iter().position(|line| !line.trim().is_empty())?;
+    let first_line = base_lines[first_idx].clone();
+    let trimmed = first_line.trim_start();
+    if !trimmed.starts_with("} else if ") || !trimmed.ends_with('{') {
+        return None;
+    }
+    let cond = trimmed
+        .trim_start_matches("} else if ")
+        .strip_suffix('{')?
+        .trim();
+    if cond.is_empty() {
+        return None;
+    }
+    let indent = &first_line[..first_line.len() - trimmed.len()];
+    let guard = variant_activation_guard(variation.name.as_deref(), &variant.name);
+    base_lines[first_idx] = format!("{indent}}} else if !({guard}) && ({cond}) {{");
+    let mut rendered = base_lines.join("\n");
+    if !rendered.is_empty() {
+        rendered.push('\n');
+    }
+    Some(rendered)
+}
+
+fn try_render_rust_functional_function_item_variation(variation: &Variation) -> Option<String> {
+    let mut base_item = parse_function_item(&variation.base.lines())?;
+
+    let mut variant_bodies = Vec::new();
+    for variant in &variation.variants {
+        let item = parse_function_item(&variant.lines())?;
+        if !base_item.compatible_with(&item) {
+            return None;
+        }
+        variant_bodies.push((variant, block_body_source(item.block())));
+    }
+
+    let mut body_src = String::new();
+    if let Some(metadata) =
+        render_functional_metadata_comment(variation.name.as_deref(), &variation.tags)
+    {
+        body_src.push_str(&metadata);
+        body_src.push('\n');
+    }
+    body_src.push_str("match () {\n");
+    for (variant, body) in variant_bodies {
+        let pattern = format!(
+            "_ if {}",
+            variant_activation_guard(variation.name.as_deref(), &variant.name)
+        );
+        render_rust_functional_arm(&mut body_src, "", &pattern, &lines_from_text(&body));
+    }
+    render_rust_functional_arm(
+        &mut body_src,
+        "",
+        "_",
+        &lines_from_text(&block_body_source(base_item.block())),
+    );
+    body_src.push_str("}\n");
+
+    let wrapped_block = format!("{{\n{body_src}}}");
+    let new_block = syn::parse_str::<syn::Block>(&wrapped_block).ok()?;
+    base_item.set_block(new_block);
+    Some(match base_item {
+        FunctionItem::Free(item) => item.to_token_stream().to_string(),
+        FunctionItem::Method(item) => item.to_token_stream().to_string(),
+    })
+}
+
+fn try_render_rust_functional_local_binding_variation(
+    variation: &Variation,
+    anonymous_idx: usize,
+) -> Option<String> {
+    let _ = anonymous_idx;
+    let base_binding = parse_local_binding_stmt(&variation.base.lines())?;
+
+    let mut variant_inits = Vec::new();
+    for variant in &variation.variants {
+        let parsed = parse_local_binding_stmt(&variant.lines())?;
+        if parsed.pat != base_binding.pat {
+            return None;
+        }
+        variant_inits.push((variant, parsed.init_expr));
+    }
+
+    let mut output = String::new();
+    let indent = &variation.indentation;
+    let variation_name = variation.name.as_deref();
+
+    if let Some(metadata) = render_functional_metadata_comment(variation_name, &variation.tags) {
+        output.push_str(indent);
+        output.push_str(&metadata);
+        output.push('\n');
+    }
+
+    output.push_str(indent);
+    output.push_str("let ");
+    output.push_str(&base_binding.pat);
+    output.push_str(" = match () {\n");
+
+    for (variant, init_expr) in variant_inits {
+        let pattern = format!(
+            "_ if {}",
+            variant_activation_guard(variation_name, &variant.name)
+        );
+        let init_lines = lines_from_text(&init_expr);
+        render_rust_functional_arm(&mut output, indent, &pattern, &init_lines);
+    }
+
+    let base_lines = lines_from_text(&base_binding.init_expr);
+    render_rust_functional_arm(&mut output, indent, "_", &base_lines);
+    output.push_str(indent);
+    output.push_str("};\n");
+
+    Some(output)
+}
+
 fn node_text_is_valid(kind: RustNodeKind, text: &str) -> bool {
     match kind {
         RustNodeKind::Expr => syn::parse_str::<syn::Expr>(text).is_ok(),
@@ -972,6 +1305,8 @@ fn node_text_is_valid(kind: RustNodeKind, text: &str) -> bool {
             let wrapped = format!("match () {{ {arm_text} _ => {{}} }}");
             syn::parse_str::<syn::Expr>(&wrapped).is_ok()
         }
+        RustNodeKind::Stmt => syn::parse_str::<syn::Stmt>(text).is_ok(),
+        RustNodeKind::Item => syn::parse_str::<syn::Item>(text).is_ok(),
     }
 }
 
@@ -979,6 +1314,7 @@ fn lift_variation_to_node(
     input: &str,
     location: &VariationLocation,
     candidates: &[RustNodeCandidate],
+    allow_expr_candidates: bool,
 ) -> Option<LiftedVariation> {
     let base_fragment = location.variation.base.lines().join("\n");
     let variant_fragments = location
@@ -989,6 +1325,9 @@ fn lift_variation_to_node(
         .collect::<Vec<_>>();
 
     for candidate in candidates {
+        if !allow_expr_candidates && matches!(candidate.kind, RustNodeKind::Expr) {
+            continue;
+        }
         if location.base_range.start < candidate.range.start
             || location.base_range.end > candidate.range.end
         {
@@ -1223,6 +1562,128 @@ impl<'a> RustFunctionalToCommentVisitor<'a> {
         true
     }
 
+    fn maybe_replace_local_match(&mut self, node: &syn::Local) -> bool {
+        let Some(init) = &node.init else {
+            return false;
+        };
+        if init.diverge.is_some() {
+            return false;
+        }
+        let syn::Expr::Match(expr_match) = init.expr.as_ref() else {
+            return false;
+        };
+
+        let Some(mut range) = self.index.range_for_span_with_line_indent(node.span()) else {
+            return false;
+        };
+        let Some(indentation) = self.index.indentation_for_span(node.span()) else {
+            return false;
+        };
+        let mut metadata = FunctionalMetadata::default();
+        if let Some((parsed, start)) = metadata_before_offset(self.index, range.start, &indentation)
+        {
+            metadata = parsed;
+            range.start = start;
+        }
+
+        let source_name = extract_variation_from_expr(&expr_match.expr);
+        let mut base_lines = None;
+        let mut variants = Vec::new();
+        let mut explicit_names = Vec::new();
+
+        if source_name.is_some() {
+            for arm in &expr_match.arms {
+                match classify_expr_match_arm(&arm.pat) {
+                    ExprArmKind::Ignore => {}
+                    ExprArmKind::Base => {
+                        let Some(lines) =
+                            extract_expr_body_content_lines(&arm.body, self.source, self.index)
+                        else {
+                            return false;
+                        };
+                        base_lines = Some(lines);
+                    }
+                    ExprArmKind::Variant(variant_name) => {
+                        let Some(lines) =
+                            extract_expr_body_content_lines(&arm.body, self.source, self.index)
+                        else {
+                            return false;
+                        };
+                        variants.push((variant_name, lines));
+                    }
+                }
+            }
+        } else {
+            for arm in &expr_match.arms {
+                if !matches!(arm.pat, syn::Pat::Wild(_)) {
+                    return false;
+                }
+
+                let Some(lines) =
+                    extract_expr_body_content_lines(&arm.body, self.source, self.index)
+                else {
+                    return false;
+                };
+
+                if let Some((_, guard_expr)) = &arm.guard {
+                    let Some((_, mutation)) = strip_mutation_from_guard_expr(guard_expr) else {
+                        return false;
+                    };
+                    if let Some(name) = mutation.variation_name {
+                        explicit_names.push(name);
+                    }
+                    if mutation.variant_name == "base" {
+                        base_lines = Some(lines);
+                    } else {
+                        variants.push((mutation.variant_name, lines));
+                    }
+                } else {
+                    base_lines = Some(lines);
+                }
+            }
+        }
+
+        let Some(base_expr_lines) = base_lines else {
+            return false;
+        };
+        if variants.is_empty() {
+            return false;
+        }
+
+        let variant_names = variants
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let inferred_name = if let Some(name) = source_name {
+            Some(name)
+        } else if explicit_names.is_empty() {
+            infer_variation_name_from_variants(&variant_names)
+        } else if explicit_names.iter().all(|name| name == &explicit_names[0]) {
+            Some(explicit_names[0].clone())
+        } else {
+            None
+        };
+        let name = metadata.variation_name.clone().or(inferred_name);
+        let pat = node.pat.to_token_stream().to_string();
+        let base_stmt_lines = local_binding_stmt_lines(&pat, &base_expr_lines, &indentation);
+        let variant_stmt_lines = variants
+            .into_iter()
+            .map(|(name, lines)| (name, local_binding_stmt_lines(&pat, &lines, &indentation)))
+            .collect::<Vec<_>>();
+
+        let block = ParsedVariationBlock {
+            indentation,
+            name,
+            tags: metadata.tags,
+            base_lines: base_stmt_lines,
+            variants: variant_stmt_lines,
+        };
+        let replacement = render_comment_variation_block(&block).join("\n");
+        self.replacements
+            .push(TextReplacement { range, replacement });
+        true
+    }
+
     fn collect_guard_arm_groups(&self, node: &syn::ExprMatch) -> Vec<GuardArmGroup> {
         let mut groups = Vec::new();
         let mut cursor = 0usize;
@@ -1316,6 +1777,13 @@ impl<'a> RustFunctionalToCommentVisitor<'a> {
 }
 
 impl<'ast> Visit<'ast> for RustFunctionalToCommentVisitor<'_> {
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        if self.maybe_replace_local_match(node) {
+            return;
+        }
+        visit::visit_local(self, node);
+    }
+
     fn visit_expr_match(&mut self, node: &'ast syn::ExprMatch) {
         if self.maybe_replace_expr_match(node) {
             return;
@@ -1340,6 +1808,33 @@ impl<'ast> Visit<'ast> for RustFunctionalToCommentVisitor<'_> {
             self.visit_arm(arm);
         }
     }
+}
+
+fn local_binding_stmt_lines(pat: &str, expr_lines: &[String], indentation: &str) -> Vec<String> {
+    if expr_lines.is_empty() {
+        return vec![format!("{indentation}let {pat} = ();")];
+    }
+
+    if expr_lines.len() == 1 {
+        return vec![format!(
+            "{indentation}let {pat} = {};",
+            expr_lines[0].trim()
+        )];
+    }
+
+    let mut out = Vec::new();
+    out.push(format!(
+        "{indentation}let {pat} = {}",
+        expr_lines[0].trim_end()
+    ));
+    for line in &expr_lines[1..expr_lines.len() - 1] {
+        out.push(format!("{indentation}{}", line.trim_end()));
+    }
+    out.push(format!(
+        "{indentation}{};",
+        expr_lines[expr_lines.len() - 1].trim_end()
+    ));
+    out
 }
 
 enum ExprArmKind {
@@ -1770,6 +2265,14 @@ fn leading_whitespace(input: &str) -> String {
 fn render_rust_functional_variation(variation: &Variation, anonymous_idx: usize) -> String {
     if is_match_arm_variation(variation) {
         return render_rust_functional_match_arms(variation, anonymous_idx);
+    }
+    if let Some(rendered) = try_render_rust_functional_function_item_variation(variation) {
+        return rendered;
+    }
+    if let Some(rendered) =
+        try_render_rust_functional_local_binding_variation(variation, anonymous_idx)
+    {
+        return rendered;
     }
 
     let mut output = String::new();
@@ -2827,5 +3330,208 @@ fn cmp(a: i32, b: i32) -> bool {
                 ("ext_2".to_string(), vec!["ext_2_1".to_string()]),
             ]
         );
+    }
+
+    #[test]
+    fn test_render_rust_functional_elides_equivalent_use_tree_variation() {
+        let source = r#"
+use crate::a::{
+    alpha,
+    /*| scope_use_list */
+    beta,
+    gamma,
+    /*|| bug_use_list */
+    /*|
+    beta,
+    gamma,
+    */
+    /* |*/
+};
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_ne!(converted, source);
+        assert!(!converted.contains("/*| scope_use_list */"));
+        assert!(converted.contains("beta,"));
+        assert!(converted.contains("gamma,"));
+        assert!(syn::parse_file(&converted).is_ok());
+    }
+
+    #[test]
+    fn test_render_rust_functional_converts_else_if_boundary_variation() {
+        let source = r#"
+fn f(x: Option<i32>) {
+    if x.is_none() {
+        return;
+    /*| scope_else_if */
+    } else if x == Some(0) {
+        return;
+    /*|| bug_else_if */
+    /*|
+    // buggy
+    */
+    /* |*/
+    }
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_ne!(converted, source);
+        assert!(converted.contains("scope_else_if"));
+        assert!(converted.contains("else if !("));
+        assert!(converted.contains("M_scope_else_if__bug_else_if"));
+        assert!(syn::parse_file(&converted).is_ok());
+    }
+
+    #[test]
+    fn test_render_rust_functional_lifts_expr_closure_hazard_variation() {
+        let source = r#"
+fn f(values: &mut Vec<i32>) {
+    for value in
+    /*| iter_expr */
+    values.iter_mut().filter(|v| **v > 0)
+    /*|| iter_expr_bug */
+    /*|
+    values.iter_mut().filter(|v| **v >= 0)
+    */
+    /* |*/
+    {
+        *value += 1;
+    }
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_ne!(converted, source);
+        assert!(converted.contains("marauders:variation=iter_expr"));
+        assert!(converted.contains("M_iter_expr_bug"));
+        assert!(syn::parse_file(&converted).is_ok());
+    }
+
+    #[test]
+    fn test_render_rust_functional_lifts_local_binding_scope_hazard_variation() {
+        let source = r#"
+fn f(x: i32) -> i32 {
+    let c = {
+        /*| inner_scope */
+        let y = if x > 0 { 1 } else { 0 };
+        y
+        /*|| inner_scope_bug */
+        /*|
+        let y = if x >= 0 { 1 } else { 0 };
+        y
+        */
+        /* |*/
+    };
+    c + 1
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_ne!(converted, source);
+        assert!(converted.contains("M_inner_scope_bug"));
+        assert!(converted.contains("match () {"));
+        assert!(syn::parse_file(&converted).is_ok());
+    }
+
+    #[test]
+    fn test_render_rust_functional_converts_local_binding_initializer_variation() {
+        let source = r#"
+fn cmp(x: i32) -> i32 {
+    /*| local_binding */
+    let c = if x > 0 { 1 } else { 0 };
+    /*|| local_binding_bug */
+    /*|
+    let c = if x >= 0 { 1 } else { 0 };
+    */
+    /* |*/
+    c + 1
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        assert_ne!(converted, source);
+        assert!(converted.contains("M_local_binding_bug"));
+        assert!(converted.contains("let c = match ()"));
+        assert!(syn::parse_file(&converted).is_ok());
+    }
+
+    #[test]
+    fn test_functional_roundtrip_local_binding_match_preserves_binding_context() {
+        let source = r#"
+fn demo(result_columns: Vec<i32>, root_result_columns: Vec<i32>, group_expr: i32) {
+    let expr_appears_in_result_columns = result_columns
+        .iter()
+        /*| scope */
+        .any(|expr| *expr == group_expr)
+        || root_result_columns
+            .iter()
+            .any(|rc| *rc == group_expr);
+        /*|| bug */
+        /*|
+        .any(|expr| *expr == group_expr);
+        */
+        /* |*/
+
+    let _ = expr_appears_in_result_columns;
+}
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let functional = render_rust_functional_code(source, &spans).unwrap();
+        assert!(functional.contains("let expr_appears_in_result_columns = match ()"));
+
+        let comment = render_rust_comment_code_from_functional(&functional).unwrap();
+        assert!(comment.contains("/*| scope */"));
+        assert!(comment.contains("let expr_appears_in_result_columns ="));
+
+        let roundtrip_spans = crate::syntax::comment::parse_code(&comment).unwrap();
+        let roundtrip_functional = render_rust_functional_code(&comment, &roundtrip_spans).unwrap();
+        assert!(roundtrip_functional.contains("let expr_appears_in_result_columns = match ()"));
+        assert!(syn::parse_file(&roundtrip_functional).is_ok());
+    }
+
+    #[test]
+    fn test_render_rust_functional_function_item_uses_tail_match_expression() {
+        let source = r#"
+/*| whole_fn */
+fn score(x: i32) -> i32 {
+    x + 1
+}
+/*|| bug */
+/*|
+fn score(x: i32) -> i32 {
+    x - 1
+}
+*/
+/* |*/
+"#;
+
+        let spans = crate::syntax::comment::parse_code(source).unwrap();
+        let converted = render_rust_functional_code(source, &spans).unwrap();
+        let file = syn::parse_file(&converted).unwrap();
+        let item_fn = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(item_fn) if item_fn.sig.ident == "score" => Some(item_fn),
+                _ => None,
+            })
+            .expect("score function should exist");
+
+        let stmt = item_fn
+            .block
+            .stmts
+            .last()
+            .expect("score body should contain a statement");
+        match stmt {
+            syn::Stmt::Expr(syn::Expr::Match(_), None) => {}
+            _ => panic!("expected trailing match expression without semicolon"),
+        }
     }
 }
