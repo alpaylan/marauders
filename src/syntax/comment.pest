@@ -40,10 +40,10 @@ tags = { "[" ~ WHITE_SPACE? ~ tag ~ (WHITE_SPACE? ~ "," ~ WHITE_SPACE? ~ tag)* ~
 // Tag ::= alphanumeric string, allowing hyphens and digits (e.g. "off-by-one", "issue-143")
 tag = @{ (ASCII_ALPHA | ASCII_DIGIT | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "-")* }
 
-comment_begin = { "(*" | "/*" | "{-" | "#|" | "//" | "\"\"\"" }
+comment_begin = { "(*" | "/*" | "{-" | "#|" | "/-" | "//" | "\"\"\"" }
 line_comment_end = @{ "//" ~ SINGLE_HSPACE* ~ &(NL | EOI) }
-comment_end   = { "*)" | "*/" | "-}" | "|#" | line_comment_end | "\"\"\"" }
-block_comment_end = { "*)" | "*/" | "-}" | "|#" | "\"\"\"" }
+comment_end   = { "*)" | "*/" | "-}" | "|#" | "-/" | line_comment_end | "\"\"\"" }
+block_comment_end = { "*)" | "*/" | "-}" | "|#" | "-/" | "\"\"\"" }
 
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
 
