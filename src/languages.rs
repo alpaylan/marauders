@@ -8,6 +8,7 @@ pub enum Language {
     Rust,
     OCaml,
     Python,
+    Lean,
     #[serde(untagged)]
     Custom(CustomLanguage),
 }
@@ -30,6 +31,7 @@ impl Language {
             Language::Rust => "rs",
             Language::OCaml => "ml",
             Language::Python => "py",
+            Language::Lean => "lean",
             Language::Custom(custom) => custom.extension.as_str(),
         }
     }
@@ -45,6 +47,7 @@ impl Language {
             "rs" => Some(Language::Rust),
             "ml" => Some(Language::OCaml),
             "py" => Some(Language::Python),
+            "lean" => Some(Language::Lean),
             _ => {
                 for custom in custom_languages {
                     if custom.extension == ext {
@@ -67,6 +70,7 @@ impl Language {
             "rust" => Some(Language::Rust),
             "ocaml" => Some(Language::OCaml),
             "python" => Some(Language::Python),
+            "lean" => Some(Language::Lean),
             _ => {
                 for custom in custom_languages {
                     if custom.name == name {
@@ -87,6 +91,7 @@ impl Language {
             Language::Rust => "/*".to_string(),
             Language::OCaml => "(*".to_string(),
             Language::Python => r#"""""#.to_string(),
+            Language::Lean => "/-".to_string(),
             Language::Custom(custom) => custom.comment_begin.clone(),
         }
     }
@@ -100,6 +105,7 @@ impl Language {
             Language::OCaml => "*)".to_string(),
             Language::Custom(custom) => custom.comment_end.clone(),
             Language::Python => r#"""""#.to_string(),
+            Language::Lean => "-/".to_string(),
         }
     }
 
@@ -150,7 +156,7 @@ impl Language {
             | Language::Racket
             | Language::OCaml
             | Language::Python => "!",
-            Language::Rust => "|",
+            Language::Rust | Language::Lean => "|",
             Language::Custom(custom_language) => custom_language.mutation_marker.as_str(),
         }
     }
