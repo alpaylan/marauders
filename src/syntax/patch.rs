@@ -409,17 +409,30 @@ fn is_safe_component_byte(byte: u8) -> bool {
 }
 
 fn render_unified_patch(start_line: usize, before: &[String], after: &[String]) -> String {
+    render_unified_patch_for(DIFF_FILE, start_line, before, after)
+}
+
+/// Render a unified-diff hunk addressing a real source file path (relative to
+/// the project root). The result is `git apply`-compatible from the project
+/// root: it produces the same edit as `marauders set --variant <id>` against
+/// the comment-form source.
+pub(crate) fn render_unified_patch_for(
+    source_rel_path: &str,
+    start_line: usize,
+    before: &[String],
+    after: &[String],
+) -> String {
     let mut patch = String::new();
     patch.push_str("diff --git a/");
-    patch.push_str(DIFF_FILE);
+    patch.push_str(source_rel_path);
     patch.push_str(" b/");
-    patch.push_str(DIFF_FILE);
+    patch.push_str(source_rel_path);
     patch.push('\n');
     patch.push_str("--- a/");
-    patch.push_str(DIFF_FILE);
+    patch.push_str(source_rel_path);
     patch.push('\n');
     patch.push_str("+++ b/");
-    patch.push_str(DIFF_FILE);
+    patch.push_str(source_rel_path);
     patch.push('\n');
     patch.push_str(&format!(
         "@@ -{},{} +{},{} @@\n",
@@ -435,6 +448,450 @@ fn render_unified_patch(start_line: usize, before: &[String], after: &[String]) 
     }
     for line in after {
         patch.push('+');
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    patch
+}
+
+/// Etna-format flat patch list: one `.patch` per variant, named by the
+/// variant id, addressing the real source path. No manifest, no bundle dir.
+#[derive(Debug, Clone)]
+pub(crate) struct EtnaPatchFile {
+    pub(crate) variant_id: String,
+    pub(crate) content: String,
+}
+
+/// Reverse of `render_etna_patches_from_comment`: read flat
+/// `<project_root>/patches/*.patch` files that address `source_path`, group
+/// them by their hunk anchor, and splice marauders comment blocks back into
+/// the source. Returns `Ok(None)` when no etna-format patches address this
+/// source (so the caller can fall through to the next conversion strategy).
+pub(crate) fn try_render_comment_from_etna_patches(
+    source_path: &Path,
+    source_content: &str,
+) -> anyhow::Result<Option<String>> {
+    // Project root = source_path's nearest ancestor that contains `patches/`.
+    let cwd = std::env::current_dir()?;
+    let mut search = cwd.as_path();
+    let patches_dir = loop {
+        let candidate = search.join("patches");
+        if candidate.is_dir() {
+            break candidate;
+        }
+        match search.parent() {
+            Some(parent) if parent != search => search = parent,
+            _ => return Ok(None),
+        }
+    };
+
+    // Path the patches address — relative to cwd if source_path is.
+    let rel_source = source_path
+        .strip_prefix(&cwd)
+        .unwrap_or(source_path)
+        .to_string_lossy()
+        .into_owned();
+
+    // Walk patches/, parse each, keep the ones that address `rel_source`.
+    struct ParsedEtnaPatch {
+        variant_id: String,
+        old_start: usize,
+        ctx_before: Vec<String>,
+        before_change: Vec<String>,
+        after_change: Vec<String>,
+        variation_name: Option<String>,
+        tags: Vec<String>,
+    }
+    let mut parsed: Vec<ParsedEtnaPatch> = Vec::new();
+    for entry in std::fs::read_dir(&patches_dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("patch") {
+            continue;
+        }
+        let body = std::fs::read_to_string(&p)?;
+        let Some((
+            diff_path,
+            old_start,
+            _old_count,
+            ctx_before,
+            before_change,
+            after_change,
+            _ctx_after,
+            variation_name,
+            tags,
+        )) = parse_single_hunk_patch(&body)?
+        else {
+            continue;
+        };
+        if diff_path != rel_source {
+            continue;
+        }
+        let variant_id = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow!("invalid patch filename '{}'", p.display()))?
+            .to_string();
+        parsed.push(ParsedEtnaPatch {
+            variant_id,
+            old_start,
+            ctx_before,
+            before_change,
+            after_change,
+            variation_name,
+            tags,
+        });
+    }
+
+    if parsed.is_empty() {
+        return Ok(None);
+    }
+
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<(usize, Vec<String>), Vec<ParsedEtnaPatch>> = BTreeMap::new();
+    for p in parsed {
+        let anchor = p.old_start + p.ctx_before.len();
+        let key = (anchor, p.before_change.clone());
+        groups.entry(key).or_default().push(p);
+    }
+
+    let (mut lines, trailing_newline) = split_lines_preserving_tail(source_content);
+    let mut sorted_groups: Vec<((usize, Vec<String>), Vec<ParsedEtnaPatch>)> =
+        groups.into_iter().collect();
+    sorted_groups.sort_by(|l, r| r.0 .0.cmp(&l.0 .0));
+
+    for ((anchor_line_1based, before_change), variants) in sorted_groups {
+        let start = anchor_line_1based - 1;
+        let end_exclusive = start + before_change.len();
+        if end_exclusive > lines.len() {
+            bail!(
+                "patch anchor {}..{} exceeds source length {}",
+                anchor_line_1based,
+                end_exclusive,
+                lines.len()
+            );
+        }
+        let base_fragment: Vec<String> = lines[start..end_exclusive].to_vec();
+        let indent = infer_indentation(&base_fragment);
+        let language = Language::Rust;
+
+        // All variants of one group share the same variation_name + tags
+        // (they came from a single comment block).
+        let variation_name = variants.iter().find_map(|v| v.variation_name.clone());
+        let tags: Vec<String> = variants
+            .iter()
+            .find(|v| !v.tags.is_empty())
+            .map(|v| v.tags.clone())
+            .unwrap_or_default();
+
+        let variant_pairs: Vec<(&str, &[String])> = variants
+            .iter()
+            .map(|v| (v.variant_id.as_str(), v.after_change.as_slice()))
+            .collect();
+        let block = render_comment_variation_block(
+            &language,
+            variation_name.as_deref(),
+            &tags,
+            &indent,
+            &base_fragment,
+            &variant_pairs,
+        );
+        lines.splice(start..end_exclusive, block);
+    }
+
+    let mut output = lines.join("\n");
+    if trailing_newline {
+        output.push('\n');
+    }
+    Ok(Some(output))
+}
+
+/// Parse a single-hunk unified diff produced by `render_unified_patch_with_context`.
+/// Returns (target_path, hunk_start_line, old_count, ctx_before, removed, added, ctx_after,
+///          variation_name, tags) — name and tags are pulled from the optional
+/// `# marauders: name=<n> tags=[<csv>]` comment line that may precede the diff.
+fn parse_single_hunk_patch(
+    body: &str,
+) -> anyhow::Result<
+    Option<(
+        String,
+        usize,
+        usize,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+        Vec<String>,
+    )>,
+> {
+    let mut target_path: Option<String> = None;
+    let mut hunk_seen = false;
+    let mut start = 0usize;
+    let mut old_count = 0usize;
+    let mut variation_name: Option<String> = None;
+    let mut tags: Vec<String> = Vec::new();
+
+    let mut leading_ctx: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut added: Vec<String> = Vec::new();
+    let mut trailing_ctx: Vec<String> = Vec::new();
+    let mut state = 0usize;
+
+    for line in body.lines() {
+        if !hunk_seen {
+            if let Some(meta) = line.strip_prefix("# marauders:") {
+                // parse `name=<n>` and `tags=[a,b,c]` segments
+                let s = meta.trim();
+                for part in split_marauders_meta(s) {
+                    if let Some(n) = part.strip_prefix("name=") {
+                        variation_name = Some(n.to_string());
+                    } else if let Some(t) = part.strip_prefix("tags=") {
+                        let t = t.trim_start_matches('[').trim_end_matches(']');
+                        tags = t
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("+++ b/") {
+                target_path = Some(rest.to_string());
+            } else if line.starts_with("@@ ") {
+                let (s, c) = parse_hunk_old_range(line)?;
+                start = s;
+                old_count = c;
+                hunk_seen = true;
+                state = 1;
+            }
+            continue;
+        }
+
+        if line.starts_with("@@ ") {
+            return Ok(None);
+        }
+
+        if let Some(rest) = line.strip_prefix(' ') {
+            match state {
+                1 => leading_ctx.push(rest.to_string()),
+                2 => {
+                    state = 3;
+                    trailing_ctx.push(rest.to_string());
+                }
+                3 => trailing_ctx.push(rest.to_string()),
+                _ => {}
+            }
+        } else if let Some(rest) = line.strip_prefix('-') {
+            if rest.starts_with("--") {
+                continue;
+            }
+            removed.push(rest.to_string());
+            state = 2;
+        } else if let Some(rest) = line.strip_prefix('+') {
+            if rest.starts_with("++") {
+                continue;
+            }
+            added.push(rest.to_string());
+            state = 2;
+        }
+    }
+
+    let Some(path) = target_path else {
+        return Ok(None);
+    };
+    if !hunk_seen {
+        return Ok(None);
+    }
+    let _ = old_count;
+    Ok(Some((
+        path,
+        start,
+        leading_ctx.len() + removed.len() + trailing_ctx.len(),
+        leading_ctx,
+        removed,
+        added,
+        trailing_ctx,
+        variation_name,
+        tags,
+    )))
+}
+
+/// Split `name=foo tags=[a,b]` while respecting the `[ ]` group.
+fn split_marauders_meta(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    let mut in_brackets = false;
+    for ch in s.chars() {
+        match ch {
+            '[' => {
+                in_brackets = true;
+                buf.push(ch);
+            }
+            ']' => {
+                in_brackets = false;
+                buf.push(ch);
+            }
+            ' ' if !in_brackets => {
+                if !buf.is_empty() {
+                    out.push(std::mem::take(&mut buf));
+                }
+            }
+            _ => buf.push(ch),
+        }
+    }
+    if !buf.is_empty() {
+        out.push(buf);
+    }
+    out
+}
+
+pub(crate) fn render_etna_patches_from_comment(
+    spans: &[Span],
+    source_rel_path: &str,
+) -> anyhow::Result<(String, Vec<EtnaPatchFile>)> {
+    // First pass: build the base source and remember (start_line, base_lines, variants, name, tags)
+    // for each variation so the second pass can splice context from base_source.
+    let mut base_source = String::new();
+    let mut current_line = 1usize;
+    struct PendingVariation {
+        start_line: usize,
+        base_lines: Vec<String>,
+        variants: Vec<(String, Vec<String>)>,
+        name: Option<String>,
+        tags: Vec<String>,
+    }
+    let mut pending: Vec<PendingVariation> = Vec::new();
+
+    for span in spans {
+        match &span.content {
+            SpanContent::Line(line) => {
+                base_source.push_str(line);
+                current_line += count_lines(line);
+            }
+            SpanContent::Variation(variation) => {
+                let start_line = current_line;
+                let base_lines = variation.base.lines();
+                for line in &base_lines {
+                    base_source.push_str(line);
+                    base_source.push('\n');
+                }
+                current_line += base_lines.len();
+
+                let variants = variation
+                    .variants
+                    .iter()
+                    .map(|v| (v.name.clone(), v.lines()))
+                    .collect();
+
+                pending.push(PendingVariation {
+                    start_line,
+                    base_lines,
+                    variants,
+                    name: variation.name.clone(),
+                    tags: variation.tags.clone(),
+                });
+            }
+        }
+    }
+
+    // Second pass: gather 3-line context before/after each variation from base_source
+    // and emit a `git apply`-compatible unified diff with a marauders metadata header.
+    const CONTEXT: usize = 3;
+    let base_lines_all: Vec<&str> = base_source.lines().collect();
+    let mut patches = Vec::new();
+
+    for pv in &pending {
+        let removed_start_idx = pv.start_line.saturating_sub(1);
+        let ctx_before_start = removed_start_idx.saturating_sub(CONTEXT);
+        let ctx_before: Vec<String> = base_lines_all[ctx_before_start..removed_start_idx]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let after_idx = removed_start_idx + pv.base_lines.len();
+        let ctx_after_end = (after_idx + CONTEXT).min(base_lines_all.len());
+        let ctx_after: Vec<String> = base_lines_all[after_idx..ctx_after_end]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        for (variant_id, variant_lines) in &pv.variants {
+            let mut content = String::new();
+            // Marauders metadata header — git apply ignores lines before
+            // the first `diff --git`, so this is a safe place to encode the
+            // variation name + tags for round-tripping back to comment form.
+            if pv.name.is_some() || !pv.tags.is_empty() {
+                content.push_str("# marauders:");
+                if let Some(n) = &pv.name {
+                    content.push_str(&format!(" name={}", n));
+                }
+                if !pv.tags.is_empty() {
+                    content.push_str(&format!(" tags=[{}]", pv.tags.join(",")));
+                }
+                content.push('\n');
+            }
+            content.push_str(&render_unified_patch_with_context(
+                source_rel_path,
+                ctx_before_start + 1,
+                &ctx_before,
+                &pv.base_lines,
+                variant_lines,
+                &ctx_after,
+            ));
+            patches.push(EtnaPatchFile {
+                variant_id: variant_id.clone(),
+                content,
+            });
+        }
+    }
+
+    Ok((base_source, patches))
+}
+
+/// Unified diff with N-line context, addressing the real source path.
+fn render_unified_patch_with_context(
+    source_rel_path: &str,
+    hunk_start_line: usize,
+    ctx_before: &[String],
+    before_change: &[String],
+    after_change: &[String],
+    ctx_after: &[String],
+) -> String {
+    let old_count = ctx_before.len() + before_change.len() + ctx_after.len();
+    let new_count = ctx_before.len() + after_change.len() + ctx_after.len();
+
+    let mut patch = String::new();
+    patch.push_str("diff --git a/");
+    patch.push_str(source_rel_path);
+    patch.push_str(" b/");
+    patch.push_str(source_rel_path);
+    patch.push('\n');
+    patch.push_str("--- a/");
+    patch.push_str(source_rel_path);
+    patch.push('\n');
+    patch.push_str("+++ b/");
+    patch.push_str(source_rel_path);
+    patch.push('\n');
+    patch.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        hunk_start_line, old_count, hunk_start_line, new_count
+    ));
+    for line in ctx_before {
+        patch.push(' ');
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    for line in before_change {
+        patch.push('-');
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    for line in after_change {
+        patch.push('+');
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    for line in ctx_after {
+        patch.push(' ');
         patch.push_str(line);
         patch.push('\n');
     }
