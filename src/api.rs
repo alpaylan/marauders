@@ -858,11 +858,15 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
 
             // Determine source path relative to the project root (cwd) so the
             // emitted patch is `git apply`-compatible from the project root.
-            // Falls back to the input path when the user invoked us from
-            // inside a subdir.
+            // Canonicalize both sides so macOS' /tmp -> /private/tmp symlink
+            // doesn't make strip_prefix fail (which would leak an absolute
+            // path into the diff header).
             let cwd = std::env::current_dir()?;
-            let source_rel_path = path
-                .strip_prefix(&cwd)
+            let cwd_canon = cwd.canonicalize().unwrap_or(cwd.clone());
+            let path_canon = path.canonicalize().unwrap_or(path.to_path_buf());
+            let source_rel_path = path_canon
+                .strip_prefix(&cwd_canon)
+                .or_else(|_| path.strip_prefix(&cwd))
                 .unwrap_or(path)
                 .to_string_lossy()
                 .into_owned();
@@ -2142,6 +2146,19 @@ fn calc(a: i32, b: i32) -> i32 {
 
     #[test]
     fn test_convert_file_patch_roundtrip() {
+        // Build an isolated project root: <tmp>/<unique>/src/calc.rs.
+        // `convert -t patch` writes to `<project_root>/patches/<variant>.patch`
+        // and resolves the source path relative to the current working dir,
+        // so we cd into the project root for the test.
+        let project = std::env::temp_dir().join(format!(
+            "marauders_etna_patch_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        ));
+        std::fs::create_dir_all(project.join("src")).unwrap();
         let original = r#"
 fn calc(a: i32, b: i32) -> i32 {
     /*| add [arith] */
@@ -2157,63 +2174,72 @@ fn calc(a: i32, b: i32) -> i32 {
     /* |*/
 }
 "#;
-        let tmp =
-            std::env::temp_dir().join(format!("marauders_convert_{}_patch.rs", std::process::id()));
-        std::fs::write(&tmp, original).unwrap();
+        let src_rel = std::path::PathBuf::from("src/calc.rs");
+        let src_abs = project.join(&src_rel);
+        std::fs::write(&src_abs, original).unwrap();
 
-        let result = convert_file(&tmp, ConversionTarget::Patch).unwrap();
-        assert_ne!(result, tmp);
-        assert_eq!(
-            result.file_name().and_then(|name| name.to_str()),
-            Some("manifest.toml")
+        // Run the conversion from the project root so source paths in patches
+        // come out relative to it.
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&project).unwrap();
+        let result = convert_file(&src_abs, ConversionTarget::Patch).unwrap();
+
+        // Returned path is one of the written patches (or `patches/` dir
+        // when no variants existed). Either way it lives under <project>/patches.
+        // (Canonicalize because /tmp may symlink to /private/tmp on macOS.)
+        let project_canon = project.canonicalize().unwrap();
+        let result_canon = result.canonicalize().unwrap_or(result.clone());
+        assert!(
+            result_canon.starts_with(project_canon.join("patches")),
+            "expected {} to live under {}/patches",
+            result_canon.display(),
+            project_canon.display(),
         );
-        assert!(result
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .ends_with(".patches"));
 
-        // Source file is kept as the base program.
-        let base_after_convert = std::fs::read_to_string(&tmp).unwrap();
+        // The two variants from the source produced two patch files.
+        let patches_dir = project.join("patches");
+        let mut patch_files: Vec<std::path::PathBuf> = std::fs::read_dir(&patches_dir)
+            .unwrap()
+            .filter_map(|e| {
+                let p = e.ok()?.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("patch") {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        patch_files.sort();
+        let names: Vec<_> = patch_files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == "add_1.patch"));
+        assert!(names.iter().any(|n| n == "add_2.patch"));
+
+        // Source file is kept as base program (marauders block stripped).
+        let base_after_convert = std::fs::read_to_string(&src_abs).unwrap();
         assert!(base_after_convert.contains("fn calc(a: i32, b: i32) -> i32 {"));
         assert!(!base_after_convert.contains("/*| add [arith] */"));
         assert!(base_after_convert.contains("a + b"));
 
-        let manifest = std::fs::read_to_string(&result).unwrap();
-        assert!(manifest.contains("format = \"marauders_patch_bundle\""));
-        assert!(manifest.contains("tags = [\"arith\"]"));
-        assert!(!manifest.contains("base ="));
+        // Patch is git-apply compatible: addresses the real source path,
+        // carries the metadata header, and includes context lines.
+        let add_1 = std::fs::read_to_string(patches_dir.join("add_1.patch")).unwrap();
+        assert!(add_1.contains("# marauders: name=add tags=[arith]"));
+        assert!(add_1.contains("--- a/src/calc.rs"));
+        assert!(add_1.contains("+++ b/src/calc.rs"));
+        assert!(add_1.contains("-    a + b"));
+        assert!(add_1.contains("+    a - b"));
 
-        let bundle_dir = result.parent().unwrap();
-        let mut patch_files = Vec::new();
-        for variation_entry in std::fs::read_dir(bundle_dir).unwrap() {
-            let variation_entry = variation_entry.unwrap();
-            if !variation_entry.file_type().unwrap().is_dir() {
-                continue;
-            }
-            for patch_entry in std::fs::read_dir(variation_entry.path()).unwrap() {
-                let patch_entry = patch_entry.unwrap();
-                if patch_entry.path().extension().and_then(|ext| ext.to_str()) == Some("patch") {
-                    patch_files.push(patch_entry.path());
-                }
-            }
-        }
-        assert!(!patch_files.is_empty());
-        let first_patch = std::fs::read_to_string(&patch_files[0]).unwrap();
-        assert!(first_patch.contains("@@ -3,1 +3,1 @@"));
+        // Reverse: convert -t comment must rebuild the original verbatim.
+        let restored_path = convert_file(&src_abs, ConversionTarget::Comment).unwrap();
+        assert_eq!(restored_path, src_abs);
+        let roundtripped = std::fs::read_to_string(&src_abs).unwrap();
+        assert_eq!(roundtripped, original);
 
-        let restored_path = convert_file(&result, ConversionTarget::Comment).unwrap();
-        assert_eq!(restored_path, tmp);
-        let roundtrip = std::fs::read_to_string(&tmp).unwrap();
-        assert!(roundtrip.contains("/*| add [arith] */"));
-        assert!(roundtrip.contains("/*|| add_1 */"));
-        assert!(roundtrip.contains("/*|| add_2 */"));
-
-        let _ = std::fs::remove_file(&tmp);
-        if let Some(bundle_dir) = result.parent() {
-            let _ = std::fs::remove_dir_all(bundle_dir);
-        }
+        std::env::set_current_dir(prev_cwd).unwrap();
+        let _ = std::fs::remove_dir_all(&project);
     }
 
     #[test]

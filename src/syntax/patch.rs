@@ -485,9 +485,15 @@ pub(crate) fn try_render_comment_from_etna_patches(
         }
     };
 
-    // Path the patches address — relative to cwd if source_path is.
-    let rel_source = source_path
-        .strip_prefix(&cwd)
+    // Path the patches address — relative to cwd. Canonicalize both sides so
+    // macOS' /tmp -> /private/tmp symlink doesn't break the prefix strip.
+    let cwd_canon = cwd.canonicalize().unwrap_or(cwd.clone());
+    let path_canon = source_path
+        .canonicalize()
+        .unwrap_or_else(|_| source_path.to_path_buf());
+    let rel_source = path_canon
+        .strip_prefix(&cwd_canon)
+        .or_else(|_| source_path.strip_prefix(&cwd))
         .unwrap_or(source_path)
         .to_string_lossy()
         .into_owned();
