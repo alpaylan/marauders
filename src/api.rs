@@ -801,6 +801,13 @@ pub fn reset_all(project: &mut Project) -> Result<Vec<SetResult>, ApiError> {
 /// - Patch syntax -> comment syntax.
 /// - Match-replace syntax -> comment syntax.
 pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, ApiError> {
+    let cwd = std::env::current_dir().map_err(ApiError::from)?;
+    convert_file_at(path, target, &cwd)
+}
+
+/// Same as `convert_file` but with an explicit project root, useful for tests
+/// that can't safely mutate process-global `cwd`.
+pub fn convert_file_at(path: &Path, target: ConversionTarget, project_root: &Path) -> Result<PathBuf, ApiError> {
     if !path.is_file() {
         return Err(ApiError::ProjectError(format!(
             "path '{}' is not a file",
@@ -856,17 +863,16 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
             let spans = crate::syntax::comment::parse_code(&content)
                 .map_err(|e| ApiError::ProjectError(e.to_string()))?;
 
-            // Determine source path relative to the project root (cwd) so the
-            // emitted patch is `git apply`-compatible from the project root.
-            // Canonicalize both sides so macOS' /tmp -> /private/tmp symlink
-            // doesn't make strip_prefix fail (which would leak an absolute
-            // path into the diff header).
-            let cwd = std::env::current_dir()?;
-            let cwd_canon = cwd.canonicalize().unwrap_or(cwd.clone());
+            // Determine source path relative to the project root so the
+            // emitted patch is `git apply`-compatible. Canonicalize both
+            // sides so macOS' /tmp -> /private/tmp symlink doesn't make
+            // strip_prefix fail (which would leak an absolute path into
+            // the diff header).
+            let root_canon = project_root.canonicalize().unwrap_or(project_root.to_path_buf());
             let path_canon = path.canonicalize().unwrap_or(path.to_path_buf());
             let source_rel_path = path_canon
-                .strip_prefix(&cwd_canon)
-                .or_else(|_| path.strip_prefix(&cwd))
+                .strip_prefix(&root_canon)
+                .or_else(|_| path.strip_prefix(project_root))
                 .unwrap_or(path)
                 .to_string_lossy()
                 .into_owned();
@@ -881,7 +887,7 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
             // One `<variant_id>.patch` per variant, no manifest, no nested
             // bundle dir. Compatible with etna.toml `kind = "patch"`,
             // `patch = "patches/<variant_id>.patch"`.
-            let patches_dir = cwd.join("patches");
+            let patches_dir = project_root.join("patches");
             std::fs::create_dir_all(&patches_dir)?;
             let mut last_written: Option<std::path::PathBuf> = None;
             for file in &patches {
@@ -974,8 +980,12 @@ pub fn convert_file(path: &Path, target: ConversionTarget) -> Result<PathBuf, Ap
                 std::fs::write(&source_path, converted)?;
                 return Ok(source_path);
             } else if let Some(converted) =
-                crate::syntax::patch::try_render_comment_from_etna_patches(path, &content)
-                    .map_err(|e| ApiError::ProjectError(e.to_string()))?
+                crate::syntax::patch::try_render_comment_from_etna_patches_at(
+                    path,
+                    &content,
+                    project_root,
+                )
+                .map_err(|e| ApiError::ProjectError(e.to_string()))?
             {
                 // Etna-format reverse: input is a Rust source file with a
                 // sibling `patches/<variant>.patch` directory at the project
@@ -2146,10 +2156,9 @@ fn calc(a: i32, b: i32) -> i32 {
 
     #[test]
     fn test_convert_file_patch_roundtrip() {
-        // Build an isolated project root: <tmp>/<unique>/src/calc.rs.
-        // `convert -t patch` writes to `<project_root>/patches/<variant>.patch`
-        // and resolves the source path relative to the current working dir,
-        // so we cd into the project root for the test.
+        // Build an isolated project root at <tmp>/<unique>/. Use
+        // `convert_file_at` so we don't touch process-global cwd (other
+        // unit tests resolve `.` to the cargo crate root and would fail).
         let project = std::env::temp_dir().join(format!(
             "marauders_etna_patch_test_{}_{}",
             std::process::id(),
@@ -2174,18 +2183,12 @@ fn calc(a: i32, b: i32) -> i32 {
     /* |*/
 }
 "#;
-        let src_rel = std::path::PathBuf::from("src/calc.rs");
-        let src_abs = project.join(&src_rel);
+        let src_abs = project.join("src/calc.rs");
         std::fs::write(&src_abs, original).unwrap();
 
-        // Run the conversion from the project root so source paths in patches
-        // come out relative to it.
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&project).unwrap();
-        let result = convert_file(&src_abs, ConversionTarget::Patch).unwrap();
+        let result = convert_file_at(&src_abs, ConversionTarget::Patch, &project).unwrap();
 
-        // Returned path is one of the written patches (or `patches/` dir
-        // when no variants existed). Either way it lives under <project>/patches.
+        // Returned path lives under <project>/patches.
         // (Canonicalize because /tmp may symlink to /private/tmp on macOS.)
         let project_canon = project.canonicalize().unwrap();
         let result_canon = result.canonicalize().unwrap_or(result.clone());
@@ -2196,24 +2199,20 @@ fn calc(a: i32, b: i32) -> i32 {
             project_canon.display(),
         );
 
-        // The two variants from the source produced two patch files.
+        // Two variants in the source produced two patch files.
         let patches_dir = project.join("patches");
-        let mut patch_files: Vec<std::path::PathBuf> = std::fs::read_dir(&patches_dir)
+        let mut names: Vec<_> = std::fs::read_dir(&patches_dir)
             .unwrap()
             .filter_map(|e| {
                 let p = e.ok()?.path();
                 if p.extension().and_then(|x| x.to_str()) == Some("patch") {
-                    Some(p)
+                    p.file_name().map(|n| n.to_string_lossy().into_owned())
                 } else {
                     None
                 }
             })
             .collect();
-        patch_files.sort();
-        let names: Vec<_> = patch_files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
+        names.sort();
         assert!(names.iter().any(|n| n == "add_1.patch"));
         assert!(names.iter().any(|n| n == "add_2.patch"));
 
@@ -2223,8 +2222,7 @@ fn calc(a: i32, b: i32) -> i32 {
         assert!(!base_after_convert.contains("/*| add [arith] */"));
         assert!(base_after_convert.contains("a + b"));
 
-        // Patch is git-apply compatible: addresses the real source path,
-        // carries the metadata header, and includes context lines.
+        // Patch is git-apply compatible: real source path + metadata header + context.
         let add_1 = std::fs::read_to_string(patches_dir.join("add_1.patch")).unwrap();
         assert!(add_1.contains("# marauders: name=add tags=[arith]"));
         assert!(add_1.contains("--- a/src/calc.rs"));
@@ -2233,12 +2231,11 @@ fn calc(a: i32, b: i32) -> i32 {
         assert!(add_1.contains("+    a - b"));
 
         // Reverse: convert -t comment must rebuild the original verbatim.
-        let restored_path = convert_file(&src_abs, ConversionTarget::Comment).unwrap();
+        let restored_path = convert_file_at(&src_abs, ConversionTarget::Comment, &project).unwrap();
         assert_eq!(restored_path, src_abs);
         let roundtripped = std::fs::read_to_string(&src_abs).unwrap();
         assert_eq!(roundtripped, original);
 
-        std::env::set_current_dir(prev_cwd).unwrap();
         let _ = std::fs::remove_dir_all(&project);
     }
 

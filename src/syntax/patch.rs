@@ -471,9 +471,18 @@ pub(crate) fn try_render_comment_from_etna_patches(
     source_path: &Path,
     source_content: &str,
 ) -> anyhow::Result<Option<String>> {
-    // Project root = source_path's nearest ancestor that contains `patches/`.
     let cwd = std::env::current_dir()?;
-    let mut search = cwd.as_path();
+    try_render_comment_from_etna_patches_at(source_path, source_content, &cwd)
+}
+
+/// Same as `try_render_comment_from_etna_patches` but with an explicit project
+/// root, useful for tests that mustn't touch process-global cwd.
+pub(crate) fn try_render_comment_from_etna_patches_at(
+    source_path: &Path,
+    source_content: &str,
+    project_root: &Path,
+) -> anyhow::Result<Option<String>> {
+    let mut search = project_root;
     let patches_dir = loop {
         let candidate = search.join("patches");
         if candidate.is_dir() {
@@ -485,15 +494,15 @@ pub(crate) fn try_render_comment_from_etna_patches(
         }
     };
 
-    // Path the patches address — relative to cwd. Canonicalize both sides so
-    // macOS' /tmp -> /private/tmp symlink doesn't break the prefix strip.
-    let cwd_canon = cwd.canonicalize().unwrap_or(cwd.clone());
+    // Path the patches address — relative to project root. Canonicalize both
+    // sides so macOS' /tmp -> /private/tmp symlink doesn't break strip_prefix.
+    let root_canon = project_root.canonicalize().unwrap_or(project_root.to_path_buf());
     let path_canon = source_path
         .canonicalize()
         .unwrap_or_else(|_| source_path.to_path_buf());
     let rel_source = path_canon
-        .strip_prefix(&cwd_canon)
-        .or_else(|_| source_path.strip_prefix(&cwd))
+        .strip_prefix(&root_canon)
+        .or_else(|_| source_path.strip_prefix(project_root))
         .unwrap_or(source_path)
         .to_string_lossy()
         .into_owned();
