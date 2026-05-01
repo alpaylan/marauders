@@ -517,13 +517,24 @@ pub(crate) fn try_render_comment_from_etna_patches_at(
         variation_name: Option<String>,
         tags: Vec<String>,
     }
+    // Collect patch paths first and sort so the variant ordering is
+    // deterministic across runs and matches the forward conversion's
+    // input order (which was source order, naturally lexicographic for
+    // names like add_1, add_2, ...).
+    let mut patch_paths: Vec<std::path::PathBuf> = std::fs::read_dir(&patches_dir)?
+        .filter_map(|e| {
+            let p = e.ok()?.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("patch") {
+                Some(p)
+            } else {
+                None
+            }
+        })
+        .collect();
+    patch_paths.sort();
+
     let mut parsed: Vec<ParsedEtnaPatch> = Vec::new();
-    for entry in std::fs::read_dir(&patches_dir)? {
-        let entry = entry?;
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("patch") {
-            continue;
-        }
+    for p in patch_paths {
         let body = std::fs::read_to_string(&p)?;
         let Some((
             diff_path,
